@@ -1,6 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -10,43 +9,57 @@ import {
   StyleSheet,
   SafeAreaView,
   StatusBar,
+  Alert,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type ShoppingItem = {
   id: string;
   name: string;
   price: number;
+  quantity: number;
   purchased: boolean;
 };
+
+const STORAGE_KEY = '@shopping_items_v2';
+const BUDGET_KEY = '@shopping_budget';
 
 export default function App() {
   const [budget, setBudget] = useState('100');
   const [itemName, setItemName] = useState('');
   const [itemPrice, setItemPrice] = useState('');
+  const [itemQuantity, setItemQuantity] = useState('1');
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load saved shopping data when the app starts
+  // Load saved shopping data
   useEffect(() => {
     const loadData = async () => {
       try {
-        const savedItems = await AsyncStorage.getItem(
-          '@shopping_items'
-        );
+        // Read old storage key too, so existing items are retained
+        const savedItems =
+          (await AsyncStorage.getItem(STORAGE_KEY)) ??
+          (await AsyncStorage.getItem('@shopping_items'));
 
-        const savedBudget = await AsyncStorage.getItem(
-          '@shopping_budget'
-        );
+        const savedBudget =
+          await AsyncStorage.getItem(BUDGET_KEY);
 
         if (savedItems !== null) {
-          setItems(JSON.parse(savedItems));
+          const parsed: ShoppingItem[] = JSON.parse(savedItems);
+
+          setItems(
+            parsed.map(item => ({
+              ...item,
+              quantity: item.quantity ?? 1,
+            }))
+          );
         }
 
         if (savedBudget !== null) {
           setBudget(savedBudget);
         }
       } catch (error) {
-        console.error('Failed to load shopping data:', error);
+        console.error('Loading failed:', error);
       } finally {
         setIsLoaded(true);
       }
@@ -62,40 +75,52 @@ export default function App() {
     const saveData = async () => {
       try {
         await AsyncStorage.multiSet([
-          ['@shopping_items', JSON.stringify(items)],
-          ['@shopping_budget', budget],
+          [STORAGE_KEY, JSON.stringify(items)],
+          [BUDGET_KEY, budget],
         ]);
       } catch (error) {
-        console.error('Failed to save shopping data:', error);
+        console.error('Saving failed:', error);
       }
     };
 
     saveData();
   }, [items, budget, isLoaded]);
 
-  // Calculate purchased items total
   const spent = items
     .filter(item => item.purchased)
-    .reduce((total, item) => total + item.price, 0);
+    .reduce(
+      (total, item) => total + item.price * item.quantity,
+      0
+    );
+
+  const planned = items.reduce(
+    (total, item) => total + item.price * item.quantity,
+    0
+  );
 
   const budgetAmount = Number(budget) || 0;
   const remaining = budgetAmount - spent;
-
   const progress =
     budgetAmount > 0
       ? Math.min((spent / budgetAmount) * 100, 100)
       : 0;
 
-  // Add a new shopping item
   const addItem = () => {
     const price = Number(itemPrice);
+    const quantity = Number(itemQuantity);
 
     if (
       !itemName.trim() ||
       !itemPrice.trim() ||
       !Number.isFinite(price) ||
-      price <= 0
+      price <= 0 ||
+      !Number.isInteger(quantity) ||
+      quantity <= 0
     ) {
+      Alert.alert(
+        'Invalid item',
+        'Enter a name, valid price and quantity.'
+      );
       return;
     }
 
@@ -103,15 +128,16 @@ export default function App() {
       id: `${Date.now()}-${Math.random()}`,
       name: itemName.trim(),
       price,
+      quantity,
       purchased: false,
     };
 
     setItems(previous => [...previous, newItem]);
     setItemName('');
     setItemPrice('');
+    setItemQuantity('1');
   };
 
-  // Mark an item purchased or unpurchased
   const togglePurchased = (id: string) => {
     setItems(previous =>
       previous.map(item =>
@@ -122,12 +148,13 @@ export default function App() {
     );
   };
 
-  // Delete a shopping item
   const deleteItem = (id: string) => {
     setItems(previous =>
       previous.filter(item => item.id !== id)
     );
   };
+
+  const money = (amount: number) => `£${amount.toFixed(2)}`;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -136,49 +163,42 @@ export default function App() {
       <FlatList
         data={items}
         keyExtractor={item => item.id}
-        contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.content}
         ListHeaderComponent={
           <View>
             <Text style={styles.title}>🛒 Shopping Items</Text>
-
             <Text style={styles.subtitle}>
               Shop smarter. Stay on budget.
             </Text>
 
-            {/* BUDGET CARD */}
             <View style={styles.budgetCard}>
-              <Text style={styles.label}>
-                Shopping Budget (£)
-              </Text>
+              <Text style={styles.label}>Shopping Budget (£)</Text>
 
               <TextInput
                 style={styles.input}
                 value={budget}
                 onChangeText={setBudget}
                 keyboardType="decimal-pad"
-                placeholder="Enter your budget"
               />
 
               <View style={styles.summaryRow}>
                 <View>
                   <Text style={styles.summaryLabel}>Spent</Text>
                   <Text style={styles.amount}>
-                    £{spent.toFixed(2)}
+                    {money(spent)}
                   </Text>
                 </View>
 
                 <View>
-                  <Text style={styles.summaryLabel}>
-                    Remaining
-                  </Text>
+                  <Text style={styles.summaryLabel}>Remaining</Text>
                   <Text
                     style={[
                       styles.amount,
                       remaining < 0 && styles.overBudget,
                     ]}
                   >
-                    £{remaining.toFixed(2)}
+                    {money(remaining)}
                   </Text>
                 </View>
               </View>
@@ -208,9 +228,12 @@ export default function App() {
                   ⚠️ You have exceeded your budget!
                 </Text>
               )}
+
+              <Text style={styles.plannedText}>
+                Planned shopping total: {money(planned)}
+              </Text>
             </View>
 
-            {/* ADD ITEM */}
             <Text style={styles.sectionTitle}>
               Add Shopping Item
             </Text>
@@ -222,13 +245,23 @@ export default function App() {
               onChangeText={setItemName}
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Price e.g. 2.50"
-              keyboardType="decimal-pad"
-              value={itemPrice}
-              onChangeText={setItemPrice}
-            />
+            <View style={styles.inputRow}>
+              <TextInput
+                style={[styles.input, styles.halfInput]}
+                placeholder="Unit price"
+                keyboardType="decimal-pad"
+                value={itemPrice}
+                onChangeText={setItemPrice}
+              />
+
+              <TextInput
+                style={[styles.input, styles.halfInput]}
+                placeholder="Quantity"
+                keyboardType="number-pad"
+                value={itemQuantity}
+                onChangeText={setItemQuantity}
+              />
+            </View>
 
             <TouchableOpacity
               style={styles.addButton}
@@ -270,9 +303,14 @@ export default function App() {
               </Text>
             </TouchableOpacity>
 
-            <Text style={styles.itemPrice}>
-              £{item.price.toFixed(2)}
-            </Text>
+            <View style={styles.priceColumn}>
+              <Text style={styles.itemPrice}>
+                {money(item.price * item.quantity)}
+              </Text>
+              <Text style={styles.quantityText}>
+                {item.quantity} × {money(item.price)}
+              </Text>
+            </View>
 
             <TouchableOpacity
               onPress={() => deleteItem(item.id)}
@@ -322,7 +360,6 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   label: {
-    fontSize: 15,
     fontWeight: '600',
     marginBottom: 8,
     color: '#344054',
@@ -336,6 +373,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 12,
     color: '#101828',
+  },
+  inputRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  halfInput: {
+    width: '48%',
   },
   summaryRow: {
     flexDirection: 'row',
@@ -374,6 +418,11 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontWeight: '600',
   },
+  plannedText: {
+    marginTop: 15,
+    fontWeight: '600',
+    color: '#344054',
+  },
   sectionTitle: {
     fontSize: 19,
     fontWeight: 'bold',
@@ -393,7 +442,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   itemCounter: {
-    fontSize: 13,
     color: '#667085',
     marginBottom: 12,
   },
@@ -425,10 +473,18 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through',
     color: '#98a2b3',
   },
+  priceColumn: {
+    alignItems: 'flex-end',
+    marginHorizontal: 10,
+  },
   itemPrice: {
     fontWeight: 'bold',
-    marginHorizontal: 12,
     color: '#344054',
+  },
+  quantityText: {
+    fontSize: 11,
+    color: '#667085',
+    marginTop: 3,
   },
   deleteText: {
     color: '#dc2626',
