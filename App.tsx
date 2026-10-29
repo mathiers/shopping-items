@@ -1,5 +1,6 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
@@ -23,6 +24,54 @@ export default function App() {
   const [itemName, setItemName] = useState('');
   const [itemPrice, setItemPrice] = useState('');
   const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  // Load saved shopping data when the app starts
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const savedItems = await AsyncStorage.getItem(
+          '@shopping_items'
+        );
+
+        const savedBudget = await AsyncStorage.getItem(
+          '@shopping_budget'
+        );
+
+        if (savedItems !== null) {
+          setItems(JSON.parse(savedItems));
+        }
+
+        if (savedBudget !== null) {
+          setBudget(savedBudget);
+        }
+      } catch (error) {
+        console.error('Failed to load shopping data:', error);
+      } finally {
+        setIsLoaded(true);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  // Save changes automatically
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const saveData = async () => {
+      try {
+        await AsyncStorage.multiSet([
+          ['@shopping_items', JSON.stringify(items)],
+          ['@shopping_budget', budget],
+        ]);
+      } catch (error) {
+        console.error('Failed to save shopping data:', error);
+      }
+    };
+
+    saveData();
+  }, [items, budget, isLoaded]);
 
   // Calculate purchased items total
   const spent = items
