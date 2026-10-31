@@ -29,20 +29,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { saveShoppingTrip } from '../utils/shoppingHistory';
 
-const CATEGORIES = [
-  'Dairy',
-  'Meat',
-  'Vegetables',
-  'Fruit',
-  'Bakery',
-  'Frozen',
-  'Drinks',
-  'Household',
-  'Other',
-] as const;
-
-type Category = (typeof CATEGORIES)[number];
-type CategoryFilter = 'All' | Category;
+import {
+  Category,
+  DEFAULT_CATEGORIES,
+  getCategories,
+  categoryByName,
+  ITEMS_KEY,
+  OLD_ITEMS_KEY,
+} from '../utils/shoppingCategories';
 
 type ShoppingItem = {
   id: string;
@@ -50,32 +44,22 @@ type ShoppingItem = {
   price: number;
   quantity: number;
   purchased: boolean;
-  category?: Category;
+  category?: string;
 };
 
-const STORAGE_KEY = '@shopping_items_v2';
-const OLD_STORAGE_KEY = '@shopping_items';
+type IconName = React.ComponentProps<typeof Ionicons>['name'];
+
 const BUDGET_KEY = '@shopping_budget';
 
 const money = (value: number) => `£${value.toFixed(2)}`;
 
-function normalizeCategory(value: unknown): Category {
-  if (
-    typeof value === 'string' &&
-    CATEGORIES.some(category => category === value)
-  ) {
-    return value as Category;
-  }
+const iconName = (name: string): IconName =>
+  name as IconName;
 
-  return 'Other';
-}
+function parseItems(raw: string | null): ShoppingItem[] {
+  if (!raw) return [];
 
-function parseShoppingItems(
-  savedData: string | null
-): ShoppingItem[] {
-  if (savedData === null) return [];
-
-  const parsed: ShoppingItem[] = JSON.parse(savedData);
+  const parsed: ShoppingItem[] = JSON.parse(raw);
 
   if (!Array.isArray(parsed)) {
     throw new Error('Invalid shopping list data');
@@ -85,34 +69,31 @@ function parseShoppingItems(
     ...item,
     quantity: item.quantity ?? 1,
     purchased: item.purchased ?? false,
-    category: normalizeCategory(item.category),
+    category: item.category || 'Other',
   }));
 }
 
 export default function ShoppingScreen() {
-  const [budget, setBudget] = useState('100');
-
-  // ADD ITEM
-  const [itemName, setItemName] = useState('');
-  const [itemPrice, setItemPrice] = useState('');
-  const [itemQuantity, setItemQuantity] = useState('1');
-  const [itemCategory, setItemCategory] =
-    useState<Category>('Other');
-
-  // SHOPPING LIST
   const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [categories, setCategories] = useState<Category[]>(
+    DEFAULT_CATEGORIES
+  );
+
+  const [budget, setBudget] = useState('100');
   const [isLoaded, setIsLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [finishingTrip, setFinishingTrip] = useState(false);
 
-  // EXPANDABLE SECTIONS
   const [budgetExpanded, setBudgetExpanded] =
     useState(false);
+  const [addExpanded, setAddExpanded] = useState(false);
 
-  const [addExpanded, setAddExpanded] =
-    useState(false);
+  const [itemName, setItemName] = useState('');
+  const [itemPrice, setItemPrice] = useState('');
+  const [itemQuantity, setItemQuantity] = useState('1');
+  const [itemCategory, setItemCategory] =
+    useState('Other');
 
-  // EDIT ITEM
   const [editingItem, setEditingItem] =
     useState<ShoppingItem | null>(null);
 
@@ -120,74 +101,72 @@ export default function ShoppingScreen() {
   const [editPrice, setEditPrice] = useState('');
   const [editQuantity, setEditQuantity] = useState('');
   const [editCategory, setEditCategory] =
-    useState<Category>('Other');
+    useState('Other');
 
-  // SEARCH AND FILTER
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] =
-    useState<CategoryFilter>('All');
+    useState('All');
 
   const finishingRef = useRef(false);
+  const skipNextSaveRef = useRef(false);
+  const localVersionRef = useRef(0);
   const saveQueue = useRef<Promise<void>>(
     Promise.resolve()
   );
-  const skipNextSaveRef = useRef(false);
-  const localVersionRef = useRef(0);
 
-  // READ EXISTING ASYNCSTORAGE DATA
   const readStoredItems = useCallback(async () => {
-    const [currentData, oldData] = await Promise.all([
-      AsyncStorage.getItem(STORAGE_KEY),
-      AsyncStorage.getItem(OLD_STORAGE_KEY),
+    const [current, old] = await Promise.all([
+      AsyncStorage.getItem(ITEMS_KEY),
+      AsyncStorage.getItem(OLD_ITEMS_KEY),
     ]);
 
-    return parseShoppingItems(currentData ?? oldData);
+    return parseItems(current ?? old);
   }, []);
 
   // INITIAL LOAD
   useEffect(() => {
     let mounted = true;
 
-    const loadData = async () => {
+    const load = async () => {
       try {
-        const [savedItems, savedBudget] =
+        const [storedItems, storedBudget, storedCategories] =
           await Promise.all([
             readStoredItems(),
             AsyncStorage.getItem(BUDGET_KEY),
+            getCategories(),
           ]);
 
         if (!mounted) return;
 
         skipNextSaveRef.current = true;
-        setItems(savedItems);
+        setItems(storedItems);
+        setCategories(storedCategories);
 
-        if (savedBudget !== null) {
-          setBudget(savedBudget);
+        if (storedBudget !== null) {
+          setBudget(storedBudget);
         }
       } catch (error) {
-        console.error('Initial load error:', error);
+        console.error('Initial shopping load:', error);
 
         if (mounted) {
           Alert.alert(
-            'Loading error',
-            'Could not load your saved shopping data.'
+            'Loading failed',
+            'Could not load shopping data.'
           );
         }
       } finally {
-        if (mounted) {
-          setIsLoaded(true);
-        }
+        if (mounted) setIsLoaded(true);
       }
     };
 
-    loadData();
+    load();
 
     return () => {
       mounted = false;
     };
   }, [readStoredItems]);
 
-  // SAVE SHOPPING ITEMS
+  // SAVE ITEMS
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -206,12 +185,12 @@ export default function ShoppingScreen() {
         if (finishingRef.current) return;
 
         await AsyncStorage.setItem(
-          STORAGE_KEY,
+          ITEMS_KEY,
           serialized
         );
       })
       .catch(error => {
-        console.error('Save items error:', error);
+        console.error('Saving shopping items:', error);
       });
   }, [items, isLoaded]);
 
@@ -220,22 +199,19 @@ export default function ShoppingScreen() {
     if (!isLoaded) return;
 
     AsyncStorage.setItem(BUDGET_KEY, budget).catch(
-      error => {
-        console.error('Save budget error:', error);
-      }
+      console.error
     );
   }, [budget, isLoaded]);
 
-  // REFRESH ITEMS WHEN RETURNING FROM HISTORY
+  // REFRESH ITEMS AND CATEGORIES ON FOCUS
   useFocusEffect(
     useCallback(() => {
       if (!isLoaded) return;
 
       let active = true;
 
-      const refreshItems = async () => {
-        const versionAtStart =
-          localVersionRef.current;
+      const refresh = async () => {
+        const version = localVersionRef.current;
 
         try {
           setRefreshing(true);
@@ -244,25 +220,24 @@ export default function ShoppingScreen() {
 
           if (!active || finishingRef.current) return;
 
-          const storedItems = await readStoredItems();
+          const [storedItems, storedCategories] =
+            await Promise.all([
+              readStoredItems(),
+              getCategories(),
+            ]);
 
           if (!active || finishingRef.current) return;
 
-          if (
-            localVersionRef.current !== versionAtStart
-          ) {
+          setCategories(storedCategories);
+
+          if (localVersionRef.current !== version) {
             return;
           }
-
-          // Update only when the stored list differs.
-          const currentSnapshot = JSON.stringify(
-            storedItems
-          );
 
           setItems(previous => {
             if (
               JSON.stringify(previous) ===
-              currentSnapshot
+              JSON.stringify(storedItems)
             ) {
               return previous;
             }
@@ -270,23 +245,31 @@ export default function ShoppingScreen() {
             skipNextSaveRef.current = true;
             return storedItems;
           });
+
+          // Reset filters if the selected category was deleted.
+          setSelectedCategory(previous =>
+            previous === 'All' ||
+            storedCategories.some(
+              category => category.name === previous
+            )
+              ? previous
+              : 'All'
+          );
         } catch (error) {
-          console.error('Refresh items error:', error);
+          console.error('Refresh shopping:', error);
 
           if (active) {
             Alert.alert(
               'Refresh failed',
-              'Could not refresh your shopping list.'
+              'Could not refresh shopping data.'
             );
           }
         } finally {
-          if (active) {
-            setRefreshing(false);
-          }
+          if (active) setRefreshing(false);
         }
       };
 
-      refreshItems();
+      refresh();
 
       return () => {
         active = false;
@@ -294,7 +277,6 @@ export default function ShoppingScreen() {
     }, [isLoaded, readStoredItems])
   );
 
-  // UPDATE ITEMS AND TRACK LOCAL CHANGES
   const updateItems = (
     updater: (previous: ShoppingItem[]) =>
       ShoppingItem[]
@@ -305,18 +287,17 @@ export default function ShoppingScreen() {
     setItems(updater);
   };
 
-  // TOTALS ALWAYS USE ALL ITEMS, NOT FILTERED ITEMS
   const spent = items
     .filter(item => item.purchased)
     .reduce(
-      (sum, item) =>
-        sum + item.price * item.quantity,
+      (total, item) =>
+        total + item.price * item.quantity,
       0
     );
 
   const planned = items.reduce(
-    (sum, item) =>
-      sum + item.price * item.quantity,
+    (total, item) =>
+      total + item.price * item.quantity,
     0
   );
 
@@ -337,25 +318,23 @@ export default function ShoppingScreen() {
     100
   );
 
-  // SEARCH + CATEGORY FILTER
   const filteredItems = items.filter(item => {
-    const matchesSearch = item.name
+    const searchMatch = item.name
       .toLowerCase()
       .includes(searchQuery.trim().toLowerCase());
 
-    const matchesCategory =
+    const categoryMatch =
       selectedCategory === 'All' ||
-      normalizeCategory(item.category) ===
+      categoryByName(categories, item.category).name ===
         selectedCategory;
 
-    return matchesSearch && matchesCategory;
+    return searchMatch && categoryMatch;
   });
 
   const hasActiveFilter =
     searchQuery.trim().length > 0 ||
     selectedCategory !== 'All';
 
-  // VALIDATE NAME, PRICE AND QUANTITY
   const validateItem = (
     name: string,
     priceText: string,
@@ -377,7 +356,6 @@ export default function ShoppingScreen() {
         'Invalid item',
         'Enter an item name, a positive unit price and a whole-number quantity.'
       );
-
       return null;
     }
 
@@ -388,26 +366,26 @@ export default function ShoppingScreen() {
     };
   };
 
-  // ADD ITEM
   const addItem = () => {
-    const validated = validateItem(
+    const valid = validateItem(
       itemName,
       itemPrice,
       itemQuantity
     );
 
-    if (!validated) return;
-
-    const newItem: ShoppingItem = {
-      id: `${Date.now()}-${Math.random()}`,
-      ...validated,
-      category: itemCategory,
-      purchased: false,
-    };
+    if (!valid) return;
 
     updateItems(previous => [
       ...previous,
-      newItem,
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        ...valid,
+        category: categoryByName(
+          categories,
+          itemCategory
+        ).name,
+        purchased: false,
+      },
     ]);
 
     setItemName('');
@@ -415,13 +393,10 @@ export default function ShoppingScreen() {
     setItemQuantity('1');
     setItemCategory('Other');
     setAddExpanded(false);
-
-    // Show the newly added item, regardless of filters.
     setSearchQuery('');
     setSelectedCategory('All');
   };
 
-  // OPEN EDIT ITEM
   const openEditItem = (item: ShoppingItem) => {
     if (finishingRef.current) return;
 
@@ -430,7 +405,7 @@ export default function ShoppingScreen() {
     setEditPrice(String(item.price));
     setEditQuantity(String(item.quantity));
     setEditCategory(
-      normalizeCategory(item.category)
+      categoryByName(categories, item.category).name
     );
   };
 
@@ -442,17 +417,16 @@ export default function ShoppingScreen() {
     setEditCategory('Other');
   };
 
-  // SAVE EDITED ITEM
   const saveEditedItem = () => {
-    if (!editingItem || finishingRef.current) return;
+    if (!editingItem) return;
 
-    const validated = validateItem(
+    const valid = validateItem(
       editName,
       editPrice,
       editQuantity
     );
 
-    if (!validated) return;
+    if (!valid) return;
 
     const targetId = editingItem.id;
 
@@ -461,8 +435,11 @@ export default function ShoppingScreen() {
         item.id === targetId
           ? {
               ...item,
-              ...validated,
-              category: editCategory,
+              ...valid,
+              category: categoryByName(
+                categories,
+                editCategory
+              ).name,
             }
           : item
       )
@@ -471,7 +448,6 @@ export default function ShoppingScreen() {
     closeEditItem();
   };
 
-  // PURCHASE CHECKBOX
   const togglePurchased = (id: string) => {
     updateItems(previous =>
       previous.map(item =>
@@ -485,14 +461,12 @@ export default function ShoppingScreen() {
     );
   };
 
-  // DELETE ITEM
   const deleteItem = (id: string) => {
     updateItems(previous =>
       previous.filter(item => item.id !== id)
     );
   };
 
-  // FINISH SHOPPING TRIP
   const finishTrip = () => {
     if (!isLoaded || finishingRef.current) return;
 
@@ -500,22 +474,19 @@ export default function ShoppingScreen() {
       item => item.purchased
     );
 
-    if (purchasedItems.length === 0) {
+    if (!purchasedItems.length) {
       Alert.alert(
         'Nothing purchased',
-        'Tick at least one item before finishing your trip.'
+        'Tick at least one item first.'
       );
       return;
     }
 
     Alert.alert(
       'Finish shopping trip?',
-      'Purchased items will be saved to History and removed from your current list. Unpurchased items will stay.',
+      'Purchased items will move to History. Unpurchased items will remain.',
       [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
+        { text: 'Cancel', style: 'cancel' },
         {
           text: 'Finish Trip',
           onPress: async () => {
@@ -541,7 +512,7 @@ export default function ShoppingScreen() {
               );
 
               await AsyncStorage.setItem(
-                STORAGE_KEY,
+                ITEMS_KEY,
                 JSON.stringify(remainingItems)
               );
 
@@ -550,14 +521,14 @@ export default function ShoppingScreen() {
 
               Alert.alert(
                 'Trip saved!',
-                'Your purchases are now in Shopping History.'
+                'Your purchases are in History.'
               );
             } catch (error) {
-              console.error('Finish trip error:', error);
+              console.error(error);
 
               Alert.alert(
                 'Save failed',
-                'Check History before trying again to avoid duplicate trips.'
+                'Check History before trying again to avoid duplicates.'
               );
             } finally {
               finishingRef.current = false;
@@ -569,33 +540,54 @@ export default function ShoppingScreen() {
     );
   };
 
-  // REUSABLE CATEGORY SELECTOR
-  const renderCategorySelector = (
-    selected: Category,
-    onSelect: (category: Category) => void
+  const categorySelector = (
+    selected: string,
+    onSelect: (name: string) => void
   ) => (
-    <View style={styles.categorySelector}>
-      {CATEGORIES.map(category => (
-        <TouchableOpacity
-          key={category}
-          style={[
-            styles.categoryChoice,
-            selected === category &&
-              styles.categoryChoiceActive,
-          ]}
-          onPress={() => onSelect(category)}
-        >
-          <Text
+    <View style={styles.categoryGrid}>
+      {categories.map(category => {
+        const active = selected === category.name;
+
+        return (
+          <TouchableOpacity
+            key={category.id}
             style={[
-              styles.categoryChoiceText,
-              selected === category &&
-                styles.categoryChoiceTextActive,
+              styles.categoryOption,
+              {
+                backgroundColor: category.background,
+                borderColor: active
+                  ? category.accent
+                  : 'transparent',
+                borderWidth: active ? 2 : 1,
+              },
             ]}
+            onPress={() => onSelect(category.name)}
           >
-            {category}
-          </Text>
-        </TouchableOpacity>
-      ))}
+            <Ionicons
+              name={iconName(category.icon)}
+              size={19}
+              color={category.accent}
+            />
+
+            <Text
+              style={[
+                styles.categoryOptionText,
+                { color: category.accent },
+              ]}
+            >
+              {category.name}
+            </Text>
+
+            {active && (
+              <Ionicons
+                name="checkmark-circle"
+                size={15}
+                color={category.accent}
+              />
+            )}
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 
@@ -610,7 +602,6 @@ export default function ShoppingScreen() {
         contentContainerStyle={styles.content}
         ListHeaderComponent={
           <View>
-            {/* PAGE HEADER */}
             <View style={styles.titleRow}>
               <View>
                 <Text style={styles.title}>
@@ -624,23 +615,21 @@ export default function ShoppingScreen() {
 
               {refreshing && (
                 <ActivityIndicator
+                  color="#15803d"
                   size="small"
-                  color="#16834a"
                 />
               )}
             </View>
 
-            {/* SHOPPING BUDGET */}
-            <View style={styles.budgetCard}>
+            {/* BUDGET */}
+            <View style={styles.card}>
               <TouchableOpacity
-                style={styles.compactHeader}
+                style={styles.headerRow}
                 onPress={() =>
-                  setBudgetExpanded(
-                    previous => !previous
-                  )
+                  setBudgetExpanded(!budgetExpanded)
                 }
               >
-                <Text style={styles.compactTitle}>
+                <Text style={styles.cardTitle}>
                   Shopping Budget
                 </Text>
 
@@ -650,14 +639,14 @@ export default function ShoppingScreen() {
                       ? 'chevron-up'
                       : 'chevron-down'
                   }
-                  size={18}
-                  color="#667085"
+                  size={19}
+                  color="#64748b"
                 />
               </TouchableOpacity>
 
               <View style={styles.summaryRow}>
                 <View>
-                  <Text style={styles.summaryLabel}>
+                  <Text style={styles.smallLabel}>
                     Spent
                   </Text>
 
@@ -667,15 +656,16 @@ export default function ShoppingScreen() {
                 </View>
 
                 <View>
-                  <Text style={styles.summaryLabel}>
+                  <Text style={styles.smallLabel}>
                     Remaining
                   </Text>
 
                   <Text
                     style={[
                       styles.amount,
-                      remaining < 0 &&
-                        styles.overBudget,
+                      remaining < 0 && {
+                        color: '#dc2626',
+                      },
                     ]}
                   >
                     {money(remaining)}
@@ -683,7 +673,7 @@ export default function ShoppingScreen() {
                 </View>
               </View>
 
-              <View style={styles.progressBackground}>
+              <View style={styles.progressTrack}>
                 <View
                   style={[
                     styles.progressFill,
@@ -699,9 +689,9 @@ export default function ShoppingScreen() {
               </View>
 
               {budgetExpanded && (
-                <View style={styles.expandedContent}>
+                <View style={styles.expanded}>
                   <Text style={styles.label}>
-                    Shopping Budget (£)
+                    Budget (£)
                   </Text>
 
                   <TextInput
@@ -709,84 +699,70 @@ export default function ShoppingScreen() {
                     value={budget}
                     onChangeText={setBudget}
                     keyboardType="decimal-pad"
-                    placeholder="Enter budget"
-                    editable={!finishingTrip}
                   />
 
-                  <Text style={styles.plannedText}>
-                    Planned shopping total: {money(planned)}
+                  <Text style={styles.hint}>
+                    Planned total: {money(planned)}
                   </Text>
 
-                  <Text style={styles.progressText}>
-                    {percentage}% of budget spent
+                  <Text style={styles.hint}>
+                    {percentage}% spent
                   </Text>
                 </View>
               )}
 
               {remaining < 0 && (
                 <Text style={styles.warning}>
-                  ⚠️ You have exceeded your budget!
+                  ⚠️ Over budget
                 </Text>
               )}
             </View>
 
-            {/* ADD ITEM BUTTON */}
+            {/* ADD ITEM */}
             <TouchableOpacity
-              style={styles.addButton}
+              style={styles.primaryButton}
               onPress={() =>
-                setAddExpanded(
-                  previous => !previous
-                )
+                setAddExpanded(!addExpanded)
               }
               disabled={!isLoaded || finishingTrip}
             >
               <Ionicons
                 name={addExpanded ? 'close' : 'add'}
-                size={21}
+                size={20}
                 color="#ffffff"
               />
 
-              <Text style={styles.addButtonText}>
+              <Text style={styles.primaryText}>
                 {addExpanded
                   ? 'Close Item Form'
                   : 'Add Shopping Item'}
               </Text>
             </TouchableOpacity>
 
-            {/* ADD ITEM FORM */}
             {addExpanded && (
-              <View style={styles.addForm}>
+              <View style={styles.card}>
                 <TextInput
                   style={styles.input}
-                  placeholder="Item name e.g. Milk"
                   value={itemName}
                   onChangeText={setItemName}
-                  editable={!finishingTrip}
+                  placeholder="Item name"
                 />
 
                 <View style={styles.inputRow}>
                   <TextInput
-                    style={[
-                      styles.input,
-                      styles.halfInput,
-                    ]}
-                    placeholder="Unit price"
-                    keyboardType="decimal-pad"
+                    style={[styles.input, styles.half]}
                     value={itemPrice}
                     onChangeText={setItemPrice}
-                    editable={!finishingTrip}
+                    placeholder="Unit price"
+                    keyboardType="decimal-pad"
                   />
 
                   <TextInput
-                    style={[
-                      styles.input,
-                      styles.halfInput,
-                    ]}
-                    placeholder="Quantity"
-                    keyboardType="number-pad"
+                    style={[styles.input, styles.half]}
                     value={itemQuantity}
                     onChangeText={setItemQuantity}
-                    editable={!finishingTrip}
+                    placeholder="Quantity"
+                    keyboardType="number-pad"
                   />
                 </View>
 
@@ -794,17 +770,17 @@ export default function ShoppingScreen() {
                   Category
                 </Text>
 
-                {renderCategorySelector(
+                {categorySelector(
                   itemCategory,
                   setItemCategory
                 )}
 
                 <TouchableOpacity
-                  style={styles.saveItemButton}
+                  style={styles.darkButton}
                   onPress={addItem}
                   disabled={!isLoaded || finishingTrip}
                 >
-                  <Text style={styles.saveItemText}>
+                  <Text style={styles.primaryText}>
                     Save Item
                   </Text>
                 </TouchableOpacity>
@@ -812,89 +788,136 @@ export default function ShoppingScreen() {
             )}
 
             {/* SEARCH */}
-            <View style={styles.searchContainer}>
+            <View style={styles.searchBox}>
               <Ionicons
                 name="search-outline"
-                size={21}
-                color="#98a2b3"
+                size={20}
+                color="#94a3b8"
               />
 
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search shopping items..."
-                placeholderTextColor="#98a2b3"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
+                placeholder="Search shopping items..."
                 autoCapitalize="none"
-                returnKeyType="search"
               />
 
               {searchQuery.length > 0 && (
                 <TouchableOpacity
-                  onPress={() =>
-                    setSearchQuery('')
-                  }
+                  onPress={() => setSearchQuery('')}
                 >
                   <Ionicons
                     name="close-circle"
                     size={20}
-                    color="#98a2b3"
+                    color="#94a3b8"
                   />
                 </TouchableOpacity>
               )}
             </View>
 
-            {/* CATEGORY FILTERS */}
+            {/* COLOURED CATEGORY FILTERS */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
               style={styles.filterScroll}
-              contentContainerStyle={styles.filterRow}
+              contentContainerStyle={styles.filterContent}
             >
-              {(
-                ['All', ...CATEGORIES] as CategoryFilter[]
-              ).map(category => (
-                <TouchableOpacity
-                  key={category}
-                  style={[
-                    styles.filterChip,
-                    selectedCategory === category &&
-                      styles.filterChipActive,
-                  ]}
-                  onPress={() =>
-                    setSelectedCategory(category)
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  {
+                    backgroundColor:
+                      selectedCategory === 'All'
+                        ? '#15803d'
+                        : '#ffffff',
+                    borderColor:
+                      selectedCategory === 'All'
+                        ? '#15803d'
+                        : '#d0d5dd',
+                  },
+                ]}
+                onPress={() => setSelectedCategory('All')}
+              >
+                <Ionicons
+                  name="apps-outline"
+                  size={16}
+                  color={
+                    selectedCategory === 'All'
+                      ? '#ffffff'
+                      : '#64748b'
                   }
+                />
+
+                <Text
+                  style={{
+                    color:
+                      selectedCategory === 'All'
+                        ? '#ffffff'
+                        : '#475569',
+                    fontWeight: '600',
+                  }}
                 >
-                  <Text
+                  All
+                </Text>
+              </TouchableOpacity>
+
+              {categories.map(category => {
+                const active =
+                  selectedCategory === category.name;
+
+                return (
+                  <TouchableOpacity
+                    key={category.id}
                     style={[
-                      styles.filterChipText,
-                      selectedCategory === category &&
-                        styles.filterChipTextActive,
+                      styles.filterChip,
+                      {
+                        backgroundColor:
+                          category.background,
+                        borderColor: active
+                          ? category.accent
+                          : 'transparent',
+                        borderWidth: active ? 2 : 1,
+                      },
                     ]}
+                    onPress={() =>
+                      setSelectedCategory(category.name)
+                    }
                   >
-                    {category}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                    <Ionicons
+                      name={iconName(category.icon)}
+                      size={16}
+                      color={category.accent}
+                    />
+
+                    <Text
+                      style={{
+                        color: category.accent,
+                        fontWeight: '600',
+                      }}
+                    >
+                      {category.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
 
-            {/* SHOPPING LIST HEADER */}
-            <View style={styles.listHeader}>
+            <View style={styles.headerRow}>
               <Text style={styles.sectionTitle}>
                 My Shopping List
               </Text>
 
-              <Text style={styles.itemCounter}>
-                {purchasedCount} / {items.length} purchased
+              <Text style={styles.smallLabel}>
+                {purchasedCount}/{items.length} purchased
               </Text>
             </View>
 
             {hasActiveFilter && (
-              <View style={styles.filterInfo}>
-                <Text style={styles.filterInfoText}>
+              <View style={styles.headerRow}>
+                <Text style={styles.hint}>
                   Showing {filteredItems.length} of{' '}
-                  {items.length} items
+                  {items.length}
                 </Text>
 
                 <TouchableOpacity
@@ -903,20 +926,20 @@ export default function ShoppingScreen() {
                     setSelectedCategory('All');
                   }}
                 >
-                  <Text style={styles.clearFilters}>
+                  <Text style={styles.clearText}>
                     Clear filters
                   </Text>
                 </TouchableOpacity>
               </View>
             )}
 
-            {/* FINISH SHOPPING TRIP */}
             <TouchableOpacity
               style={[
-                styles.finishButton,
-                (finishingTrip ||
-                  purchasedCount === 0) &&
-                  styles.disabledButton,
+                styles.darkButton,
+                { marginVertical: 14 },
+                purchasedCount === 0 && {
+                  opacity: 0.5,
+                },
               ]}
               onPress={finishTrip}
               disabled={
@@ -925,7 +948,7 @@ export default function ShoppingScreen() {
                 purchasedCount === 0
               }
             >
-              <Text style={styles.finishButtonText}>
+              <Text style={styles.primaryText}>
                 {finishingTrip
                   ? 'Saving Trip...'
                   : '✓ Finish Shopping Trip'}
@@ -933,100 +956,114 @@ export default function ShoppingScreen() {
             </TouchableOpacity>
           </View>
         }
-        renderItem={({ item }) => (
-          <View style={styles.itemRow}>
-            <TouchableOpacity
-              style={styles.itemDetails}
-              onPress={() =>
-                togglePurchased(item.id)
-              }
-              disabled={finishingTrip}
-            >
-              <Text style={styles.checkbox}>
-                {item.purchased ? '☑' : '☐'}
-              </Text>
+        renderItem={({ item }) => {
+          const category = categoryByName(
+            categories,
+            item.category
+          );
 
-              <View style={styles.itemTextColumn}>
-                <Text
-                  style={[
-                    styles.itemName,
-                    item.purchased &&
-                      styles.purchased,
-                  ]}
-                  numberOfLines={2}
-                >
-                  {item.name}
+          return (
+            <View
+              style={[
+                styles.itemRow,
+                {
+                  backgroundColor:
+                    category.background,
+                },
+              ]}
+            >
+              <TouchableOpacity
+                style={styles.itemMain}
+                onPress={() =>
+                  togglePurchased(item.id)
+                }
+                disabled={finishingTrip}
+              >
+                <Ionicons
+                  name={
+                    item.purchased
+                      ? 'checkbox'
+                      : 'square-outline'
+                  }
+                  size={24}
+                  color={category.accent}
+                />
+
+                <View style={styles.itemInfo}>
+                  <Text
+                    style={[
+                      styles.itemName,
+                      item.purchased &&
+                        styles.purchased,
+                    ]}
+                    numberOfLines={2}
+                  >
+                    {item.name}
+                  </Text>
+
+                  <View style={styles.categoryLabel}>
+                    <Ionicons
+                      name={iconName(category.icon)}
+                      size={12}
+                      color={category.accent}
+                    />
+
+                    <Text
+                      style={[
+                        styles.categoryLabelText,
+                        { color: category.accent },
+                      ]}
+                    >
+                      {category.name}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.priceColumn}>
+                <Text style={styles.itemPrice}>
+                  {money(
+                    item.price * item.quantity
+                  )}
                 </Text>
 
-                <Text style={styles.itemCategory}>
-                  {normalizeCategory(item.category)}
+                <Text style={styles.quantityText}>
+                  {item.quantity} × {money(item.price)}
                 </Text>
               </View>
-            </TouchableOpacity>
 
-            <View style={styles.priceColumn}>
-              <Text style={styles.itemPrice}>
-                {money(
-                  item.price * item.quantity
-                )}
-              </Text>
+              <TouchableOpacity
+                style={styles.action}
+                onPress={() => openEditItem(item)}
+                disabled={finishingTrip}
+              >
+                <Ionicons
+                  name="pencil-outline"
+                  size={19}
+                  color="#15803d"
+                />
+              </TouchableOpacity>
 
-              <Text style={styles.quantityText}>
-                {item.quantity} × {money(item.price)}
-              </Text>
+              <TouchableOpacity
+                style={styles.action}
+                onPress={() => deleteItem(item.id)}
+                disabled={finishingTrip}
+              >
+                <Ionicons
+                  name="trash-outline"
+                  size={19}
+                  color="#dc2626"
+                />
+              </TouchableOpacity>
             </View>
-
-            {/* EDIT */}
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() =>
-                openEditItem(item)
-              }
-              disabled={finishingTrip}
-              accessibilityLabel={`Edit ${item.name}`}
-            >
-              <Ionicons
-                name="pencil-outline"
-                size={20}
-                color="#15803d"
-              />
-            </TouchableOpacity>
-
-            {/* DELETE */}
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() =>
-                deleteItem(item.id)
-              }
-              disabled={finishingTrip}
-              accessibilityLabel={`Delete ${item.name}`}
-            >
-              <Ionicons
-                name="trash-outline"
-                size={20}
-                color="#dc2626"
-              />
-            </TouchableOpacity>
-          </View>
-        )}
+          );
+        }}
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Ionicons
-              name={
-                hasActiveFilter
-                  ? 'search-outline'
-                  : 'basket-outline'
-              }
-              size={36}
-              color="#98a2b3"
-            />
-
-            <Text style={styles.emptyText}>
-              {hasActiveFilter
-                ? 'No items match your search or category.'
-                : 'Your shopping list is empty. Add your first item!'}
-            </Text>
-          </View>
+          <Text style={styles.emptyText}>
+            {hasActiveFilter
+              ? 'No items match your filters.'
+              : 'Your shopping list is empty. Add your first item!'}
+          </Text>
         }
       />
 
@@ -1050,7 +1087,7 @@ export default function ShoppingScreen() {
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
-              <View style={styles.modalHeader}>
+              <View style={styles.headerRow}>
                 <Text style={styles.modalTitle}>
                   Edit Shopping Item
                 </Text>
@@ -1061,12 +1098,12 @@ export default function ShoppingScreen() {
                   <Ionicons
                     name="close"
                     size={24}
-                    color="#667085"
+                    color="#64748b"
                   />
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.modalLabel}>
+              <Text style={styles.label}>
                 Item name
               </Text>
 
@@ -1074,12 +1111,11 @@ export default function ShoppingScreen() {
                 style={styles.input}
                 value={editName}
                 onChangeText={setEditName}
-                placeholder="Item name"
               />
 
               <View style={styles.inputRow}>
-                <View style={styles.halfInput}>
-                  <Text style={styles.modalLabel}>
+                <View style={styles.half}>
+                  <Text style={styles.label}>
                     Unit price (£)
                   </Text>
 
@@ -1088,12 +1124,11 @@ export default function ShoppingScreen() {
                     value={editPrice}
                     onChangeText={setEditPrice}
                     keyboardType="decimal-pad"
-                    placeholder="Price"
                   />
                 </View>
 
-                <View style={styles.halfInput}>
-                  <Text style={styles.modalLabel}>
+                <View style={styles.half}>
+                  <Text style={styles.label}>
                     Quantity
                   </Text>
 
@@ -1102,16 +1137,15 @@ export default function ShoppingScreen() {
                     value={editQuantity}
                     onChangeText={setEditQuantity}
                     keyboardType="number-pad"
-                    placeholder="Quantity"
                   />
                 </View>
               </View>
 
-              <Text style={styles.modalLabel}>
+              <Text style={styles.label}>
                 Category
               </Text>
 
-              {renderCategorySelector(
+              {categorySelector(
                 editCategory,
                 setEditCategory
               )}
@@ -1121,7 +1155,7 @@ export default function ShoppingScreen() {
                   style={styles.cancelButton}
                   onPress={closeEditItem}
                 >
-                  <Text style={styles.cancelButtonText}>
+                  <Text style={styles.cancelText}>
                     Cancel
                   </Text>
                 </TouchableOpacity>
@@ -1130,7 +1164,7 @@ export default function ShoppingScreen() {
                   style={styles.confirmButton}
                   onPress={saveEditedItem}
                 >
-                  <Text style={styles.confirmButtonText}>
+                  <Text style={styles.primaryText}>
                     Save Changes
                   </Text>
                 </TouchableOpacity>
@@ -1149,459 +1183,280 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f7fa',
     paddingTop: StatusBar.currentHeight || 0,
   },
-
   content: {
     padding: 16,
     paddingBottom: 60,
   },
-
   titleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-
   title: {
     fontSize: 26,
     fontWeight: 'bold',
     color: '#153c2e',
-    marginBottom: 4,
   },
-
   subtitle: {
-    fontSize: 13,
     color: '#667085',
+    fontSize: 13,
+    marginTop: 4,
     marginBottom: 16,
   },
-
-  budgetCard: {
+  card: {
     backgroundColor: '#ffffff',
-    padding: 15,
     borderRadius: 14,
+    padding: 16,
     marginBottom: 16,
     elevation: 2,
   },
-
-  compactHeader: {
+  headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 12,
   },
-
-  compactTitle: {
+  cardTitle: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#153c2e',
   },
-
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginVertical: 10,
   },
-
-  summaryLabel: {
-    fontSize: 12,
+  smallLabel: {
     color: '#667085',
-    marginBottom: 3,
+    fontSize: 12,
   },
-
   amount: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#16834a',
+    color: '#15803d',
   },
-
-  overBudget: {
-    color: '#dc2626',
-  },
-
-  progressBackground: {
+  progressTrack: {
     height: 8,
+    borderRadius: 8,
     backgroundColor: '#e5e7eb',
-    borderRadius: 10,
     overflow: 'hidden',
   },
-
   progressFill: {
     height: '100%',
-    borderRadius: 10,
   },
-
-  expandedContent: {
-    marginTop: 15,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 15,
+  expanded: {
+    marginTop: 16,
   },
-
   label: {
+    color: '#344054',
     fontWeight: '600',
     marginBottom: 8,
-    color: '#344054',
   },
-
   input: {
-    backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#d0d5dd',
+    backgroundColor: '#ffffff',
     borderRadius: 10,
     padding: 12,
     fontSize: 16,
     marginBottom: 12,
     color: '#101828',
   },
-
-  plannedText: {
-    marginTop: 4,
-    fontWeight: '600',
-    color: '#344054',
-  },
-
-  progressText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: '#667085',
-  },
-
-  warning: {
-    color: '#dc2626',
-    marginTop: 12,
-    fontWeight: '600',
-  },
-
-  addButton: {
-    backgroundColor: '#16834a',
-    padding: 14,
-    borderRadius: 10,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-
-  addButtonText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 15,
-  },
-
-  addForm: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 18,
-    elevation: 2,
-  },
-
   inputRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-
-  halfInput: {
+  half: {
     width: '48%',
   },
-
-  saveItemButton: {
-    backgroundColor: '#153c2e',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
+  hint: {
+    fontSize: 12,
+    color: '#667085',
+    marginTop: 5,
   },
-
-  saveItemText: {
+  warning: {
+    color: '#dc2626',
+    marginTop: 10,
+    fontWeight: '600',
+  },
+  primaryButton: {
+    backgroundColor: '#15803d',
+    borderRadius: 10,
+    padding: 14,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 14,
+  },
+  primaryText: {
     color: '#ffffff',
     fontWeight: 'bold',
-    fontSize: 15,
+    fontSize: 14,
   },
-
-  // CATEGORY SELECTION
-  categorySelector: {
+  darkButton: {
+    backgroundColor: '#153c2e',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+  },
+  categoryGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     marginBottom: 16,
   },
-
-  categoryChoice: {
-    borderWidth: 1,
-    borderColor: '#d0d5dd',
-    borderRadius: 20,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#ffffff',
-  },
-
-  categoryChoiceActive: {
-    backgroundColor: '#15803d',
-    borderColor: '#15803d',
-  },
-
-  categoryChoiceText: {
-    color: '#475569',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-
-  categoryChoiceTextActive: {
-    color: '#ffffff',
-  },
-
-  // SEARCH
-  searchContainer: {
+  categoryOption: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 11,
+    borderRadius: 12,
+  },
+  categoryOptionText: {
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  searchBox: {
     backgroundColor: '#ffffff',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#d0d5dd',
-    borderRadius: 12,
-    paddingHorizontal: 13,
-    marginTop: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
     marginBottom: 12,
   },
-
   searchInput: {
     flex: 1,
     fontSize: 15,
+    padding: 12,
     color: '#101828',
-    paddingVertical: 12,
-    marginLeft: 8,
   },
-
-  // FILTER CHIPS
   filterScroll: {
     marginBottom: 16,
   },
-
-  filterRow: {
+  filterContent: {
     gap: 8,
     paddingRight: 12,
   },
-
   filterChip: {
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#d0d5dd',
-    borderRadius: 20,
-    paddingVertical: 9,
-    paddingHorizontal: 15,
-  },
-
-  filterChipActive: {
-    backgroundColor: '#15803d',
-    borderColor: '#15803d',
-  },
-
-  filterChipText: {
-    color: '#475569',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  filterChipTextActive: {
-    color: '#ffffff',
-  },
-
-  // LIST
-  listHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 6,
-    marginBottom: 12,
+    gap: 6,
+    borderRadius: 20,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
   },
-
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#153c2e',
   },
-
-  itemCounter: {
-    fontSize: 12,
-    color: '#667085',
-  },
-
-  filterInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-
-  filterInfoText: {
-    color: '#667085',
-    fontSize: 12,
-  },
-
-  clearFilters: {
+  clearText: {
     color: '#15803d',
+    fontWeight: 'bold',
     fontSize: 12,
-    fontWeight: 'bold',
   },
-
-  finishButton: {
-    backgroundColor: '#153c2e',
-    padding: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 18,
-  },
-
-  finishButtonText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-
-  disabledButton: {
-    opacity: 0.5,
-  },
-
   itemRow: {
-    backgroundColor: '#ffffff',
+    borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    borderRadius: 10,
     marginBottom: 10,
-    elevation: 1,
   },
-
-  itemDetails: {
+  itemMain: {
     flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    minWidth: 0,
+    gap: 8,
   },
-
-  checkbox: {
-    fontSize: 24,
-    marginRight: 8,
-    color: '#16834a',
-  },
-
-  itemTextColumn: {
+  itemInfo: {
     flex: 1,
     minWidth: 0,
   },
-
   itemName: {
-    fontSize: 15,
     color: '#101828',
+    fontSize: 15,
+    fontWeight: '500',
   },
-
-  itemCategory: {
-    fontSize: 11,
-    color: '#15803d',
-    marginTop: 4,
-  },
-
   purchased: {
+    color: '#94a3b8',
     textDecorationLine: 'line-through',
-    color: '#98a2b3',
   },
-
+  categoryLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 5,
+  },
+  categoryLabelText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
   priceColumn: {
     alignItems: 'flex-end',
-    marginHorizontal: 5,
+    marginHorizontal: 4,
   },
-
   itemPrice: {
     fontWeight: 'bold',
     color: '#344054',
     fontSize: 13,
   },
-
   quantityText: {
     fontSize: 10,
-    color: '#667085',
-    marginTop: 3,
+    color: '#64748b',
+    marginTop: 4,
   },
-
-  actionButton: {
-    padding: 8,
+  action: {
+    padding: 7,
   },
-
-  emptyContainer: {
-    alignItems: 'center',
-    marginTop: 25,
-    gap: 10,
-  },
-
   emptyText: {
+    color: '#94a3b8',
     textAlign: 'center',
-    color: '#98a2b3',
-    fontSize: 13,
+    marginTop: 24,
   },
-
-  // EDIT MODAL
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
     justifyContent: 'center',
     padding: 20,
   },
-
   modalCard: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
     padding: 20,
-    elevation: 8,
     maxHeight: '85%',
   },
-
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#153c2e',
   },
-
-  modalLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#344054',
-    marginBottom: 8,
-  },
-
   modalActions: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 12,
+    marginTop: 10,
   },
-
   cancelButton: {
     flex: 1,
-    padding: 14,
-    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#d0d5dd',
+    borderRadius: 10,
+    padding: 14,
     alignItems: 'center',
   },
-
-  cancelButtonText: {
-    color: '#475569',
+  cancelText: {
     fontWeight: 'bold',
+    color: '#475569',
   },
-
   confirmButton: {
     flex: 1,
     backgroundColor: '#15803d',
-    padding: 14,
     borderRadius: 10,
+    padding: 14,
     alignItems: 'center',
-  },
-
-  confirmButtonText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
   },
 });

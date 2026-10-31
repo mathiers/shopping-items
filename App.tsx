@@ -12,6 +12,7 @@ import {
 import ShoppingScreen from './src/screens/ShoppingScreen';
 import BudgetScreen from './src/screens/BudgetScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
 
 type RootTabParamList = {
   Shop: undefined;
@@ -34,12 +35,6 @@ function PlaceholderScreen({ title }: { title: string }) {
 }
 
 
-
-
-
-function SettingsScreen() {
-  return <PlaceholderScreen title="Settings" />;
-}
 
 function MainNavigator() {
   const insets = useSafeAreaInsets();
