@@ -4,6 +4,10 @@ import { View, Text, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import ShoppingScreen from './src/screens/ShoppingScreen';
 
@@ -39,27 +43,34 @@ function SettingsScreen() {
   return <PlaceholderScreen title="Settings" />;
 }
 
-export default function App() {
+function MainNavigator() {
+  const insets = useSafeAreaInsets();
+
   return (
     <NavigationContainer>
       <Tab.Navigator
         initialRouteName="Shop"
         screenOptions={({ route }) => ({
           headerShown: false,
+
           tabBarActiveTintColor: '#15803d',
           tabBarInactiveTintColor: '#475569',
+
           tabBarStyle: {
             backgroundColor: '#ffffff',
             borderTopColor: '#e5e7eb',
             borderTopWidth: 1,
-            height: 80,
+            height: 65 + insets.bottom,
             paddingTop: 8,
-            paddingBottom: 12,
+            paddingBottom: Math.max(insets.bottom, 12),
             elevation: 8,
           },
-          tabBarItemStyle: {
-            paddingVertical: 3,
+
+          tabBarLabelStyle: {
+            fontSize: 12,
+            fontWeight: '700',
           },
+
           tabBarIcon: ({ focused, color, size }) => {
             let iconName: React.ComponentProps<
               typeof Ionicons
@@ -69,15 +80,21 @@ export default function App() {
               case 'Shop':
                 iconName = focused ? 'cart' : 'cart-outline';
                 break;
+
               case 'History':
                 iconName = focused ? 'time' : 'time-outline';
                 break;
+
               case 'Budget':
                 iconName = focused ? 'wallet' : 'wallet-outline';
                 break;
+
               case 'Settings':
-                iconName = focused ? 'settings' : 'settings-outline';
+                iconName = focused
+                  ? 'settings'
+                  : 'settings-outline';
                 break;
+
               default:
                 iconName = 'ellipse-outline';
             }
@@ -92,12 +109,32 @@ export default function App() {
           },
         })}
       >
-        <Tab.Screen name="Shop" component={ShoppingScreen} />
-        <Tab.Screen name="History" component={HistoryScreen} />
-        <Tab.Screen name="Budget" component={BudgetScreen} />
-        <Tab.Screen name="Settings" component={SettingsScreen} />
+        <Tab.Screen
+          name="Shop"
+          component={ShoppingScreen}
+        />
+        <Tab.Screen
+          name="History"
+          component={HistoryScreen}
+        />
+        <Tab.Screen
+          name="Budget"
+          component={BudgetScreen}
+        />
+        <Tab.Screen
+          name="Settings"
+          component={SettingsScreen}
+        />
       </Tab.Navigator>
     </NavigationContainer>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <MainNavigator />
+    </SafeAreaProvider>
   );
 }
 
@@ -109,19 +146,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 24,
   },
+
   placeholderTitle: {
     fontSize: 26,
     fontWeight: 'bold',
     color: '#153c2e',
     marginBottom: 12,
   },
+
   placeholderText: {
     fontSize: 15,
     color: '#667085',
     textAlign: 'center',
-  },
-  tabBarLabelStyle: {
-  fontSize: 12,
-  fontWeight: '700',
   },
 });
