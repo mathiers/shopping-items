@@ -5,157 +5,567 @@ import {
   Text,
   ScrollView,
   StyleSheet,
-  ActivityIndicator,
+  TouchableOpacity,
+  TextInput,
+  Alert,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
+import { getCurrency, formatMoney } from '../utils/currency';
+
+import {
+  Category,
+  DEFAULT_CATEGORIES,
+  getCategories,
+  categoryByName,
+  ITEMS_KEY,
+  OLD_ITEMS_KEY,
+} from '../utils/shoppingCategories';
 
 type ShoppingItem = {
   id: string;
   name: string;
   price: number;
-  quantity?: number;
+  quantity: number;
   purchased: boolean;
+  category?: string;
 };
 
+type CategoryTotal = {
+  category: Category;
+  amount: number;
+};
+
+type IconName = React.ComponentProps<typeof Ionicons>['name'];
+
+const BUDGET_KEY = '@shopping_budget';
+
+
 export default function BudgetScreen() {
+  const [currency, setCurrency] = useState('GBP');
+
+  const money = (value: number) => formatMoney(value, currency);
+
+    useFocusEffect(
+      useCallback(() => {
+        let active = true;
+
+        getCurrency().then(saved => {
+          if (active) {
+            setCurrency(saved);
+          }
+        }).catch(error => {
+          console.error('Currency loading error:', error);
+        });
+
+        return () => {
+          active = false;
+        };
+      }, [])
+    );
+
+  const [budget, setBudget] = useState(0);
+  const [budgetInput, setBudgetInput] = useState('');
+  const [editing, setEditing] = useState(false);
+
   const [items, setItems] = useState<ShoppingItem[]>([]);
-  const [budget, setBudget] = useState(100);
-  const [loading, setLoading] = useState(true);
+  const [categories, setCategories] = useState<Category[]>(
+    DEFAULT_CATEGORIES
+  );
+
+  const loadData = useCallback(async () => {
+    try {
+      const [savedBudget, savedItems, legacyItems, savedCategories] =
+        await Promise.all([
+          AsyncStorage.getItem(BUDGET_KEY),
+          AsyncStorage.getItem(ITEMS_KEY),
+          AsyncStorage.getItem(OLD_ITEMS_KEY),
+          getCategories(),
+        ]);
+
+      const parsedBudget = savedBudget
+        ? Number(JSON.parse(savedBudget))
+        : 0;
+
+      const safeBudget = Number.isFinite(parsedBudget)
+        ? parsedBudget
+        : 0;
+
+      const parsedItems = JSON.parse(
+        savedItems ?? legacyItems ?? '[]'
+      );
+
+      setBudget(safeBudget);
+      setBudgetInput(String(safeBudget));
+
+      setItems(
+        Array.isArray(parsedItems) ? parsedItems : []
+      );
+
+      setCategories(savedCategories);
+    } catch (error) {
+      console.error('Budget loading error:', error);
+      Alert.alert(
+        'Unable to load budget',
+        'Please try reopening the Budget tab.'
+      );
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
-
-      const loadBudget = async () => {
-        try {
-          setLoading(true);
-
-          const savedItems =
-            (await AsyncStorage.getItem('@shopping_items_v2')) ??
-            (await AsyncStorage.getItem('@shopping_items'));
-
-          const savedBudget =
-            await AsyncStorage.getItem('@shopping_budget');
-
-          if (!active) return;
-
-          setItems(savedItems ? JSON.parse(savedItems) : []);
-          setBudget(
-            savedBudget !== null ? Number(savedBudget) || 0 : 100
-          );
-        } catch (error) {
-          console.error('Budget loading error:', error);
-        } finally {
-          if (active) setLoading(false);
-        }
-      };
-
-      loadBudget();
-
-      return () => {
-        active = false;
-      };
-    }, [])
+      loadData();
+    }, [loadData])
   );
 
-  const planned = items.reduce(
-    (sum, item) => sum + item.price * (item.quantity ?? 1),
+  const saveBudget = async () => {
+    const value = Number(budgetInput);
+
+    if (
+      budgetInput.trim() === '' ||
+      !Number.isFinite(value) ||
+      value < 0
+    ) {
+      Alert.alert(
+        'Invalid budget',
+        'Enter a valid amount of zero or more.'
+      );
+      return;
+    }
+
+    try {
+      await AsyncStorage.setItem(
+        BUDGET_KEY,
+        JSON.stringify(value)
+      );
+
+      setBudget(value);
+      setEditing(false);
+    } catch (error) {
+      console.error('Budget save error:', error);
+      Alert.alert(
+        'Save failed',
+        'Could not update your budget.'
+      );
+    }
+  };
+
+  const plannedTotal = items.reduce(
+    (sum, item) =>
+      sum +
+      Number(item.price || 0) *
+        Number(item.quantity || 1),
     0
   );
 
-  const spent = items
+  const spentTotal = items
     .filter(item => item.purchased)
     .reduce(
-      (sum, item) => sum + item.price * (item.quantity ?? 1),
+      (sum, item) =>
+        sum +
+        Number(item.price || 0) *
+          Number(item.quantity || 1),
       0
     );
 
-  const remaining = budget - spent;
-  const purchased = items.filter(item => item.purchased).length;
+  const remaining = budget - spentTotal;
 
   const percentage =
-    budget > 0 ? Math.round((spent / budget) * 100) : 0;
+    budget > 0 ? (spentTotal / budget) * 100 : 0;
 
-  const progress = Math.min(Math.max(percentage, 0), 100);
+  const displayPercentage = Math.round(percentage);
 
-  const money = (amount: number) => `£${amount.toFixed(2)}`;
+  const purchasedCount = items.filter(
+    item => item.purchased
+  ).length;
 
-  if (loading) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color="#16834a" />
-      </View>
-    );
-  }
+  const progressColor =
+    budget <= 0
+      ? '#94A3B8'
+      : percentage > 100
+        ? '#EF4444'
+        : percentage >= 85
+          ? '#F59E0B'
+          : '#16A34A';
+
+  const statusMessage =
+    budget <= 0
+      ? 'Set your shopping budget to get started'
+      : remaining < 0
+        ? `Over budget by ${money(Math.abs(remaining))}`
+        : percentage >= 85
+          ? 'Approaching your budget limit'
+          : 'You are within your shopping budget';
+
+  const categoryTotals: CategoryTotal[] = categories
+    .map(category => {
+      const amount = items
+        .filter(item => {
+          const matched = categoryByName(
+            categories,
+            item.category
+          );
+
+          return (
+            matched.id === category.id &&
+            item.purchased
+          );
+        })
+        .reduce(
+          (sum, item) =>
+            sum +
+            Number(item.price || 0) *
+              Number(item.quantity || 1),
+          0
+        );
+
+      return { category, amount };
+    })
+    .filter(entry => entry.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+
+  const maxCategoryAmount = Math.max(
+    1,
+    ...categoryTotals.map(entry => entry.amount)
+  );
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
     >
-      <Text style={styles.title}>Budget Overview</Text>
-      <Text style={styles.subtitle}>
-        Track your shopping spending.
-      </Text>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.title}>
+            Shopping Budget
+          </Text>
 
-      <View style={styles.mainCard}>
-        <Text style={styles.cardLabel}>Total Shopping Budget</Text>
-        <Text style={styles.budgetAmount}>{money(budget)}</Text>
+          <Text style={styles.subtitle}>
+            Your money, at a glance
+          </Text>
+        </View>
+
+        <View style={styles.headerIcon}>
+          <Ionicons
+            name="wallet-outline"
+            size={25}
+            color="#15803D"
+          />
+        </View>
+      </View>
+
+      {/* HERO CARD */}
+      <View style={styles.hero}>
+        <View style={styles.heroTop}>
+          <Text style={styles.heroLabel}>
+            Remaining budget
+          </Text>
+
+          <Ionicons
+            name="wallet-outline"
+            size={22}
+            color="#C6E8D4"
+          />
+        </View>
+
+        <Text style={styles.heroAmount}>
+          {money(remaining)}
+        </Text>
+
+        <View style={styles.heroMeta}>
+          <Text style={styles.heroMetaText}>
+            {money(spentTotal)} spent
+          </Text>
+
+          <Text style={styles.heroMetaText}>
+            {money(budget)} budget
+          </Text>
+        </View>
 
         <View style={styles.progressTrack}>
           <View
             style={[
               styles.progressFill,
               {
-                width: `${progress}%`,
-                backgroundColor:
-                  remaining < 0 ? '#dc2626' : '#16a34a',
+                width: `${Math.min(
+                  100,
+                  Math.max(0, percentage)
+                )}%`,
+                backgroundColor: progressColor,
               },
             ]}
           />
         </View>
 
-        <Text style={styles.progressLabel}>
-          {percentage}% of budget spent
+        <View style={styles.statusRow}>
+          <Ionicons
+            name={
+              remaining < 0
+                ? 'alert-circle-outline'
+                : 'checkmark-circle-outline'
+            }
+            size={17}
+            color={
+              remaining < 0
+                ? '#FCA5A5'
+                : '#A7E9BF'
+            }
+          />
+
+          <Text style={styles.statusText}>
+            {statusMessage}
+          </Text>
+        </View>
+      </View>
+
+      {/* SUMMARY CARDS */}
+      <View style={styles.summaryRow}>
+        <View style={styles.summaryCard}>
+          <Ionicons
+            name="receipt-outline"
+            size={23}
+            color="#E28C50"
+          />
+
+          <Text style={styles.summaryLabel}>
+            Purchased
+          </Text>
+
+          <Text style={styles.summaryAmount}>
+            {money(spentTotal)}
+          </Text>
+        </View>
+
+        <View style={styles.summaryCard}>
+          <Ionicons
+            name="cart-outline"
+            size={23}
+            color="#447CC4"
+          />
+
+          <Text style={styles.summaryLabel}>
+            Planned total
+          </Text>
+
+          <Text style={styles.summaryAmount}>
+            {money(plannedTotal)}
+          </Text>
+        </View>
+      </View>
+
+      {/* SPENDING PROGRESS */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>
+          Spending Progress
         </Text>
 
-        {remaining < 0 && (
-          <Text style={styles.warning}>
-            ⚠️ You are over budget by {money(Math.abs(remaining))}
+        <View style={styles.progressSummary}>
+          <View style={styles.percentageCircle}>
+            <Text
+              style={[
+                styles.percentageText,
+                { color: progressColor },
+              ]}
+            >
+              {displayPercentage}%
+            </Text>
+
+            <Text style={styles.percentageCaption}>
+              used
+            </Text>
+          </View>
+
+          <View style={styles.progressDetails}>
+            <View style={styles.legendRow}>
+              <View
+                style={[
+                  styles.legendDot,
+                  { backgroundColor: progressColor },
+                ]}
+              />
+
+              <Text style={styles.legendText}>
+                Spent {money(spentTotal)}
+              </Text>
+            </View>
+
+            <View style={styles.legendRow}>
+              <View
+                style={[
+                  styles.legendDot,
+                  { backgroundColor: '#D5EBDD' },
+                ]}
+              />
+
+              <Text style={styles.legendText}>
+                Remaining {money(remaining)}
+              </Text>
+            </View>
+
+            <Text style={styles.progressHint}>
+              {purchasedCount} of {items.length}{' '}
+              items purchased
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.secondaryTrack}>
+          <View
+            style={[
+              styles.secondaryFill,
+              {
+                width: `${Math.min(
+                  100,
+                  Math.max(0, percentage)
+                )}%`,
+                backgroundColor: progressColor,
+              },
+            ]}
+          />
+        </View>
+      </View>
+
+      {/* CATEGORY BREAKDOWN */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>
+          Spending by Category
+        </Text>
+
+        <Text style={styles.cardHint}>
+          Based on purchased items in your current list
+        </Text>
+
+        {categoryTotals.length === 0 ? (
+          <Text style={styles.emptyText}>
+            Purchased items will appear here.
           </Text>
+        ) : (
+          categoryTotals.map(entry => (
+            <View
+              key={entry.category.id}
+              style={styles.categoryRow}
+            >
+              <View style={styles.categoryHeading}>
+                <View style={styles.categoryNameRow}>
+                  <View
+                    style={[
+                      styles.categoryIcon,
+                      {
+                        backgroundColor:
+                          entry.category.background,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        entry.category.icon as IconName
+                      }
+                      size={19}
+                      color={entry.category.accent}
+                    />
+                  </View>
+
+                  <Text style={styles.categoryName}>
+                    {entry.category.name}
+                  </Text>
+                </View>
+
+                <Text style={styles.categoryAmount}>
+                  {money(entry.amount)}
+                </Text>
+              </View>
+
+              <View style={styles.categoryTrack}>
+                <View
+                  style={[
+                    styles.categoryFill,
+                    {
+                      width: `${
+                        (entry.amount /
+                          maxCategoryAmount) *
+                        100
+                      }%`,
+                      backgroundColor:
+                        entry.category.accent,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          ))
         )}
       </View>
 
-      <View style={styles.grid}>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Spent</Text>
-          <Text style={styles.statValue}>{money(spent)}</Text>
+      {/* BUDGET EDITOR */}
+      <View style={styles.card}>
+        <View style={styles.editHeader}>
+          <View>
+            <Text style={styles.cardTitle}>
+              Budget Settings
+            </Text>
+
+            <Text style={styles.cardHint}>
+              Set your spending limit
+            </Text>
+          </View>
+
+          {!editing && (
+            <TouchableOpacity
+              onPress={() => setEditing(true)}
+              style={styles.editButton}
+            >
+              <Ionicons
+                name="create-outline"
+                size={17}
+                color="#15803D"
+              />
+
+              <Text style={styles.editButtonText}>
+                Edit
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Remaining</Text>
-          <Text
-            style={[
-              styles.statValue,
-              remaining < 0 && styles.negative,
-            ]}
-          >
-            {money(remaining)}
+        {editing ? (
+          <View>
+            <TextInput
+              style={styles.input}
+              value={budgetInput}
+              onChangeText={setBudgetInput}
+              keyboardType="decimal-pad"
+              placeholder="Enter budget amount"
+            />
+
+            <View style={styles.editActions}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => {
+                  setBudgetInput(String(budget));
+                  setEditing(false);
+                }}
+              >
+                <Text style={styles.cancelText}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={saveBudget}
+              >
+                <Text style={styles.saveText}>
+                  Save Budget
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <Text style={styles.currentBudget}>
+            {money(budget)}
           </Text>
-        </View>
-
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Planned Total</Text>
-          <Text style={styles.statValue}>{money(planned)}</Text>
-        </View>
-
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Purchased Items</Text>
-          <Text style={styles.statValue}>
-            {purchased} / {items.length}
-          </Text>
-        </View>
+        )}
       </View>
     </ScrollView>
   );
@@ -164,88 +574,285 @@ export default function BudgetScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f7fa',
+    backgroundColor: '#F5F7FA',
   },
   content: {
-    padding: 20,
-    paddingBottom: 40,
+    padding: 16,
+    paddingBottom: 50,
   },
-  loading: {
-    flex: 1,
-    justifyContent: 'center',
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 18,
   },
   title: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 'bold',
-    color: '#153c2e',
-    marginBottom: 6,
+    color: '#153C2E',
   },
   subtitle: {
     color: '#667085',
-    fontSize: 14,
-    marginBottom: 24,
+    fontSize: 13,
+    marginTop: 4,
   },
-  mainCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
+  headerIcon: {
+    backgroundColor: '#E2F3E8',
+    padding: 12,
+    borderRadius: 14,
+  },
+  hero: {
+    backgroundColor: '#153C2E',
     padding: 22,
-    elevation: 3,
-    marginBottom: 20,
+    borderRadius: 20,
+    marginBottom: 16,
   },
-  cardLabel: {
-    color: '#667085',
-    marginBottom: 8,
+  heroTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  budgetAmount: {
-    fontSize: 36,
+  heroLabel: {
+    color: '#BBD7C8',
+    fontSize: 14,
+  },
+  heroAmount: {
+    color: '#FFFFFF',
+    fontSize: 35,
     fontWeight: 'bold',
-    color: '#153c2e',
-    marginBottom: 20,
+    marginTop: 12,
+    marginBottom: 18,
+  },
+  heroMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  heroMetaText: {
+    color: '#D5E7DC',
+    fontSize: 12,
   },
   progressTrack: {
-    height: 12,
-    backgroundColor: '#e5e7eb',
+    height: 9,
     borderRadius: 10,
+    backgroundColor: '#436B57',
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
     borderRadius: 10,
   },
-  progressLabel: {
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 15,
+  },
+  statusText: {
+    color: '#D5E7DC',
+    fontSize: 12,
+    flex: 1,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  summaryCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    elevation: 2,
+  },
+  summaryLabel: {
+    fontSize: 12,
     color: '#667085',
     marginTop: 10,
   },
-  warning: {
-    color: '#dc2626',
-    fontWeight: '600',
-    marginTop: 12,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  statCard: {
-    width: '48%',
-    backgroundColor: '#ffffff',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 14,
-    elevation: 2,
-  },
-  statLabel: {
-    color: '#667085',
-    fontSize: 13,
-    marginBottom: 10,
-  },
-  statValue: {
+  summaryAmount: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#16834a',
+    color: '#25364A',
+    marginTop: 5,
   },
-  negative: {
-    color: '#dc2626',
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 17,
+    marginBottom: 16,
+    elevation: 2,
+  },
+  cardTitle: {
+    fontSize: 17,
+    fontWeight: 'bold',
+    color: '#153C2E',
+  },
+  cardHint: {
+    fontSize: 12,
+    color: '#667085',
+    marginTop: 5,
+    marginBottom: 14,
+  },
+  progressSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 20,
+    gap: 20,
+  },
+  percentageCircle: {
+    width: 115,
+    height: 115,
+    borderRadius: 58,
+    borderWidth: 11,
+    borderColor: '#D5EBDD',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  percentageText: {
+    fontSize: 23,
+    fontWeight: 'bold',
+  },
+  percentageCaption: {
+    fontSize: 11,
+    color: '#667085',
+  },
+  progressDetails: {
+    flex: 1,
+    gap: 12,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  legendText: {
+    color: '#344054',
+    fontSize: 13,
+  },
+  progressHint: {
+    fontSize: 12,
+    color: '#667085',
+  },
+  secondaryTrack: {
+    height: 8,
+    backgroundColor: '#EDF2F7',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  secondaryFill: {
+    height: '100%',
+    borderRadius: 10,
+  },
+  categoryRow: {
+    marginTop: 14,
+  },
+  categoryHeading: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 9,
+  },
+  categoryNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  categoryIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categoryName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#344054',
+  },
+  categoryAmount: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#153C2E',
+  },
+  categoryTrack: {
+    height: 7,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  categoryFill: {
+    height: '100%',
+    borderRadius: 10,
+  },
+  emptyText: {
+    color: '#98A2B3',
+    textAlign: 'center',
+    paddingVertical: 18,
+  },
+  editHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  editButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#EAF7EF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 9,
+  },
+  editButtonText: {
+    color: '#15803D',
+    fontWeight: '600',
+  },
+  currentBudget: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#153C2E',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 17,
+    marginBottom: 12,
+    color: '#153C2E',
+  },
+  editActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  cancelButton: {
+    flex: 1,
+    padding: 13,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  cancelText: {
+    color: '#475569',
+    fontWeight: '600',
+  },
+  saveButton: {
+    flex: 1,
+    padding: 13,
+    backgroundColor: '#15803D',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  saveText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
   },
 });

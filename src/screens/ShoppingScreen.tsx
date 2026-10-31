@@ -23,6 +23,8 @@ import {
   ScrollView,
 } from 'react-native';
 
+import { getCurrency, formatMoney } from '../utils/currency';
+
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -51,7 +53,7 @@ type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
 const BUDGET_KEY = '@shopping_budget';
 
-const money = (value: number) => `£${value.toFixed(2)}`;
+
 
 const iconName = (name: string): IconName =>
   name as IconName;
@@ -74,6 +76,23 @@ function parseItems(raw: string | null): ShoppingItem[] {
 }
 
 export default function ShoppingScreen() {
+  const [currency, setCurrency] = useState('GBP');
+  const money = (value: number) => formatMoney(value, currency);
+    useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      getCurrency().then(saved => {
+        if (active) {
+          setCurrency(saved);
+        }
+      });
+
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [categories, setCategories] = useState<Category[]>(
     DEFAULT_CATEGORIES
@@ -695,7 +714,7 @@ export default function ShoppingScreen() {
               {budgetExpanded && (
                 <View style={styles.expanded}>
                   <Text style={styles.label}>
-                    Budget (£)
+                    Budget ({currency})
                   </Text>
 
                   <TextInput
@@ -1120,7 +1139,7 @@ export default function ShoppingScreen() {
               <View style={styles.inputRow}>
                 <View style={styles.half}>
                   <Text style={styles.label}>
-                    Unit price (£)
+                    Unit price ({currency})
                   </Text>
 
                   <TextInput

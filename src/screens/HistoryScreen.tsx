@@ -18,6 +18,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { getCurrency, formatMoney } from '../utils/currency';
 
 import {
   getShoppingHistory,
@@ -58,7 +59,7 @@ type CategorySpending = {
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
-const money = (value: number) => `£${value.toFixed(2)}`;
+
 
 const iconName = (value: string): IconName =>
   value as IconName;
@@ -193,6 +194,30 @@ function buildCategorySpending(
 }
 
 export default function HistoryScreen() {
+  const [currency, setCurrency] = useState('GBP');
+
+  const money = (value: number) => formatMoney(value, currency);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      getCurrency()
+        .then(saved => {
+          if (active) {
+            setCurrency(saved);
+          }
+        })
+        .catch(error => {
+          console.error('Currency loading error:', error);
+        });
+
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
+
   const [trips, setTrips] = useState<ShoppingTrip[]>([]);
   const [categories, setCategories] = useState<Category[]>(
     DEFAULT_CATEGORIES
