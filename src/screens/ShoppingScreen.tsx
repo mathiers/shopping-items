@@ -1,5 +1,11 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+
 import {
   View,
   Text,
@@ -13,10 +19,13 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { saveShoppingTrip } from '../utils/shoppingHistory';
 
 type ShoppingItem = {
@@ -31,7 +40,25 @@ const STORAGE_KEY = '@shopping_items_v2';
 const OLD_STORAGE_KEY = '@shopping_items';
 const BUDGET_KEY = '@shopping_budget';
 
-const money = (amount: number) => `£${amount.toFixed(2)}`;
+const money = (value: number) => `£${value.toFixed(2)}`;
+
+function parseShoppingItems(
+  savedData: string | null
+): ShoppingItem[] {
+  if (savedData === null) return [];
+
+  const parsed: ShoppingItem[] = JSON.parse(savedData);
+
+  if (!Array.isArray(parsed)) {
+    throw new Error('Invalid shopping list data');
+  }
+
+  return parsed.map(item => ({
+    ...item,
+    quantity: item.quantity ?? 1,
+    purchased: item.purchased ?? false,
+  }));
+}
 
 export default function ShoppingScreen() {
   const [budget, setBudget] = useState('100');
@@ -41,13 +68,17 @@ export default function ShoppingScreen() {
   const [itemQuantity, setItemQuantity] = useState('1');
 
   const [items, setItems] = useState<ShoppingItem[]>([]);
+
   const [isLoaded, setIsLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [finishingTrip, setFinishingTrip] = useState(false);
 
-  const [budgetExpanded, setBudgetExpanded] = useState(false);
-  const [addExpanded, setAddExpanded] = useState(false);
+  const [budgetExpanded, setBudgetExpanded] =
+    useState(false);
 
-  // Edit Item modal state
+  const [addExpanded, setAddExpanded] =
+    useState(false);
+
   const [editingItem, setEditingItem] =
     useState<ShoppingItem | null>(null);
 
@@ -55,49 +86,64 @@ export default function ShoppingScreen() {
   const [editPrice, setEditPrice] = useState('');
   const [editQuantity, setEditQuantity] = useState('');
 
-  // Coordinate AsyncStorage writes with trip completion.
   const finishingRef = useRef(false);
-  const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
+  // Serializes all Shop-screen item writes.
+  const saveQueue = useRef<Promise<void>>(
+    Promise.resolve()
+  );
+
+  // Prevent refresh from writing stale items back.
+  const skipNextSaveRef = useRef(false);
+
+  // Tracks whether the local list has changed.
+  const localVersionRef = useRef(0);
+
+  // Read the same keys used by History's Shop Again.
+  const readStoredItems = useCallback(async () => {
+    const [currentData, oldData] = await Promise.all([
+      AsyncStorage.getItem(STORAGE_KEY),
+      AsyncStorage.getItem(OLD_STORAGE_KEY),
+    ]);
+
+    return parseShoppingItems(
+      currentData ?? oldData
+    );
+  }, []);
+
+  // INITIAL LOAD
   useEffect(() => {
     let mounted = true;
 
     const loadData = async () => {
       try {
-        const [currentItems, oldItems, savedBudget] =
+        const [savedItems, savedBudget] =
           await Promise.all([
-            AsyncStorage.getItem(STORAGE_KEY),
-            AsyncStorage.getItem(OLD_STORAGE_KEY),
+            readStoredItems(),
             AsyncStorage.getItem(BUDGET_KEY),
           ]);
 
         if (!mounted) return;
 
-        const savedItems = currentItems ?? oldItems;
-
-        if (savedItems !== null) {
-          const parsed: ShoppingItem[] = JSON.parse(savedItems);
-
-          setItems(
-            parsed.map(item => ({
-              ...item,
-              quantity: item.quantity ?? 1,
-            }))
-          );
-        }
+        skipNextSaveRef.current = true;
+        setItems(savedItems);
 
         if (savedBudget !== null) {
           setBudget(savedBudget);
         }
       } catch (error) {
-        console.error('Shopping data load error:', error);
+        console.error('Initial load error:', error);
 
-        Alert.alert(
-          'Loading error',
-          'Your saved shopping list could not be loaded.'
-        );
+        if (mounted) {
+          Alert.alert(
+            'Loading error',
+            'Could not load your saved shopping data.'
+          );
+        }
       } finally {
-        if (mounted) setIsLoaded(true);
+        if (mounted) {
+          setIsLoaded(true);
+        }
       }
     };
 
@@ -106,12 +152,20 @@ export default function ShoppingScreen() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [readStoredItems]);
 
+  // SAVE LOCAL ITEM CHANGES
   useEffect(() => {
-    if (!isLoaded || finishingRef.current) return;
+    if (!isLoaded) return;
 
-    const nextItems = JSON.stringify(items);
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+
+    if (finishingRef.current) return;
+
+    const serialized = JSON.stringify(items);
 
     saveQueue.current = saveQueue.current
       .catch(() => undefined)
@@ -120,46 +174,133 @@ export default function ShoppingScreen() {
 
         await AsyncStorage.setItem(
           STORAGE_KEY,
-          nextItems
+          serialized
         );
       })
       .catch(error => {
-        console.error('Shopping items save error:', error);
+        console.error('Save items error:', error);
       });
   }, [items, isLoaded]);
 
+  // SAVE BUDGET
   useEffect(() => {
     if (!isLoaded) return;
 
-    AsyncStorage.setItem(BUDGET_KEY, budget).catch(error => {
-      console.error('Budget save error:', error);
+    AsyncStorage.setItem(
+      BUDGET_KEY,
+      budget
+    ).catch(error => {
+      console.error('Save budget error:', error);
     });
   }, [budget, isLoaded]);
 
-  // Shopping totals
+  // REFRESH WHEN RETURNING FROM HISTORY
+  useFocusEffect(
+    useCallback(() => {
+      if (!isLoaded) return;
+
+      let active = true;
+
+      const refreshItems = async () => {
+        const versionAtStart =
+          localVersionRef.current;
+
+        try {
+          setRefreshing(true);
+
+          // Complete pending Shop-screen writes.
+          await saveQueue.current;
+
+          if (!active || finishingRef.current) return;
+
+          const storedItems = await readStoredItems();
+
+          if (!active || finishingRef.current) return;
+
+          // Don't overwrite edits made during refresh.
+          if (
+            localVersionRef.current !==
+            versionAtStart
+          ) {
+            return;
+          }
+
+          // Avoid a redundant state update and save.
+          setItems(previous => {
+            if (
+              JSON.stringify(previous) ===
+              JSON.stringify(storedItems)
+            ) {
+              return previous;
+            }
+
+            skipNextSaveRef.current = true;
+
+            return storedItems;
+          });
+        } catch (error) {
+          console.error('Refresh items error:', error);
+
+          if (active) {
+            Alert.alert(
+              'Refresh failed',
+              'Could not refresh your shopping list.'
+            );
+          }
+        } finally {
+          if (active) {
+            setRefreshing(false);
+          }
+        }
+      };
+
+      refreshItems();
+
+      return () => {
+        active = false;
+      };
+    }, [isLoaded, readStoredItems])
+  );
+
+  // Update items and track local changes.
+  const updateItems = (
+    updater: (previous: ShoppingItem[]) =>
+      ShoppingItem[]
+  ) => {
+    if (!isLoaded || finishingRef.current) return;
+
+    localVersionRef.current += 1;
+
+    setItems(updater);
+  };
+
+  // TOTALS
   const spent = items
     .filter(item => item.purchased)
     .reduce(
-      (total, item) =>
-        total + item.price * (item.quantity ?? 1),
+      (sum, item) =>
+        sum + item.price * item.quantity,
       0
     );
 
   const planned = items.reduce(
-    (total, item) =>
-      total + item.price * (item.quantity ?? 1),
+    (sum, item) =>
+      sum + item.price * item.quantity,
     0
   );
 
-  const purchasedCount =
-    items.filter(item => item.purchased).length;
+  const purchasedCount = items.filter(
+    item => item.purchased
+  ).length;
 
   const budgetAmount = Number(budget) || 0;
   const remaining = budgetAmount - spent;
 
   const percentage =
     budgetAmount > 0
-      ? Math.round((spent / budgetAmount) * 100)
+      ? Math.round(
+          (spent / budgetAmount) * 100
+        )
       : 0;
 
   const progress = Math.min(
@@ -167,6 +308,7 @@ export default function ShoppingScreen() {
     100
   );
 
+  // VALIDATION
   const validateItem = (
     name: string,
     priceText: string,
@@ -186,7 +328,7 @@ export default function ShoppingScreen() {
     ) {
       Alert.alert(
         'Invalid item',
-        'Enter a name, positive unit price and whole-number quantity.'
+        'Enter an item name, a positive price and a whole-number quantity.'
       );
 
       return null;
@@ -201,8 +343,6 @@ export default function ShoppingScreen() {
 
   // ADD ITEM
   const addItem = () => {
-    if (!isLoaded || finishingRef.current) return;
-
     const validated = validateItem(
       itemName,
       itemPrice,
@@ -217,7 +357,10 @@ export default function ShoppingScreen() {
       purchased: false,
     };
 
-    setItems(previous => [...previous, newItem]);
+    updateItems(previous => [
+      ...previous,
+      newItem,
+    ]);
 
     setItemName('');
     setItemPrice('');
@@ -225,27 +368,23 @@ export default function ShoppingScreen() {
     setAddExpanded(false);
   };
 
-  // OPEN EDIT MODAL
+  // EDIT ITEM
   const openEditItem = (item: ShoppingItem) => {
-    if (!isLoaded || finishingRef.current) return;
+    if (finishingRef.current) return;
 
     setEditingItem(item);
     setEditName(item.name);
     setEditPrice(String(item.price));
-    setEditQuantity(String(item.quantity ?? 1));
+    setEditQuantity(String(item.quantity));
   };
 
-  // CLOSE EDIT MODAL
   const closeEditItem = () => {
-    if (finishingRef.current) return;
-
     setEditingItem(null);
     setEditName('');
     setEditPrice('');
     setEditQuantity('');
   };
 
-  // SAVE EDITED ITEM
   const saveEditedItem = () => {
     if (!editingItem || finishingRef.current) return;
 
@@ -257,15 +396,12 @@ export default function ShoppingScreen() {
 
     if (!validated) return;
 
-    const targetId = editingItem.id;
+    const id = editingItem.id;
 
-    setItems(previous =>
+    updateItems(previous =>
       previous.map(item =>
-        item.id === targetId
-          ? {
-              ...item,
-              ...validated,
-            }
+        item.id === id
+          ? { ...item, ...validated }
           : item
       )
     );
@@ -273,11 +409,9 @@ export default function ShoppingScreen() {
     closeEditItem();
   };
 
-  // TOGGLE PURCHASED
+  // PURCHASE CHECKBOX
   const togglePurchased = (id: string) => {
-    if (finishingRef.current) return;
-
-    setItems(previous =>
+    updateItems(previous =>
       previous.map(item =>
         item.id === id
           ? {
@@ -291,9 +425,7 @@ export default function ShoppingScreen() {
 
   // DELETE ITEM
   const deleteItem = (id: string) => {
-    if (finishingRef.current) return;
-
-    setItems(previous =>
+    updateItems(previous =>
       previous.filter(item => item.id !== id)
     );
   };
@@ -342,7 +474,7 @@ export default function ShoppingScreen() {
                   id: item.id,
                   name: item.name,
                   price: item.price,
-                  quantity: item.quantity ?? 1,
+                  quantity: item.quantity,
                 }))
               );
 
@@ -351,11 +483,12 @@ export default function ShoppingScreen() {
                 JSON.stringify(remainingItems)
               );
 
+              skipNextSaveRef.current = true;
               setItems(remainingItems);
 
               Alert.alert(
                 'Trip saved!',
-                'Your purchases are now in Shopping History.'
+                'Purchased items are now in Shopping History.'
               );
             } catch (error) {
               console.error('Finish trip error:', error);
@@ -385,20 +518,33 @@ export default function ShoppingScreen() {
         contentContainerStyle={styles.content}
         ListHeaderComponent={
           <View>
-            <Text style={styles.title}>
-              🛒 Shopping Items
-            </Text>
+            <View style={styles.titleRow}>
+              <View>
+                <Text style={styles.title}>
+                  🛒 Shopping Items
+                </Text>
 
-            <Text style={styles.subtitle}>
-              Shop smarter. Stay on budget.
-            </Text>
+                <Text style={styles.subtitle}>
+                  Shop smarter. Stay on budget.
+                </Text>
+              </View>
 
-            {/* COMPACT BUDGET CARD */}
+              {refreshing && (
+                <ActivityIndicator
+                  size="small"
+                  color="#16834a"
+                />
+              )}
+            </View>
+
+            {/* BUDGET CARD */}
             <View style={styles.budgetCard}>
               <TouchableOpacity
                 style={styles.compactHeader}
                 onPress={() =>
-                  setBudgetExpanded(previous => !previous)
+                  setBudgetExpanded(
+                    previous => !previous
+                  )
                 }
               >
                 <Text style={styles.compactTitle}>
@@ -435,7 +581,8 @@ export default function ShoppingScreen() {
                   <Text
                     style={[
                       styles.amount,
-                      remaining < 0 && styles.overBudget,
+                      remaining < 0 &&
+                        styles.overBudget,
                     ]}
                   >
                     {money(remaining)}
@@ -490,13 +637,13 @@ export default function ShoppingScreen() {
               )}
             </View>
 
-            {/* EXPANDABLE ADD ITEM */}
+            {/* ADD ITEM */}
             <TouchableOpacity
               style={styles.addButton}
               onPress={() =>
                 setAddExpanded(previous => !previous)
               }
-              disabled={finishingTrip || !isLoaded}
+              disabled={!isLoaded || finishingTrip}
             >
               <Ionicons
                 name={addExpanded ? 'close' : 'add'}
@@ -523,7 +670,10 @@ export default function ShoppingScreen() {
 
                 <View style={styles.inputRow}>
                   <TextInput
-                    style={[styles.input, styles.halfInput]}
+                    style={[
+                      styles.input,
+                      styles.halfInput,
+                    ]}
                     placeholder="Unit price"
                     keyboardType="decimal-pad"
                     value={itemPrice}
@@ -532,7 +682,10 @@ export default function ShoppingScreen() {
                   />
 
                   <TextInput
-                    style={[styles.input, styles.halfInput]}
+                    style={[
+                      styles.input,
+                      styles.halfInput,
+                    ]}
                     placeholder="Quantity"
                     keyboardType="number-pad"
                     value={itemQuantity}
@@ -544,7 +697,7 @@ export default function ShoppingScreen() {
                 <TouchableOpacity
                   style={styles.saveItemButton}
                   onPress={addItem}
-                  disabled={finishingTrip || !isLoaded}
+                  disabled={!isLoaded || finishingTrip}
                 >
                   <Text style={styles.saveItemText}>
                     Save Item
@@ -553,7 +706,7 @@ export default function ShoppingScreen() {
               </View>
             )}
 
-            {/* SHOPPING LIST HEADER */}
+            {/* LIST HEADER */}
             <View style={styles.listHeader}>
               <Text style={styles.sectionTitle}>
                 My Shopping List
@@ -564,17 +717,17 @@ export default function ShoppingScreen() {
               </Text>
             </View>
 
-            {/* FINISH TRIP BUTTON */}
             <TouchableOpacity
               style={[
                 styles.finishButton,
-                (finishingTrip || purchasedCount === 0) &&
+                (finishingTrip ||
+                  purchasedCount === 0) &&
                   styles.disabledButton,
               ]}
               onPress={finishTrip}
               disabled={
-                finishingTrip ||
                 !isLoaded ||
+                finishingTrip ||
                 purchasedCount === 0
               }
             >
@@ -590,7 +743,9 @@ export default function ShoppingScreen() {
           <View style={styles.itemRow}>
             <TouchableOpacity
               style={styles.itemDetails}
-              onPress={() => togglePurchased(item.id)}
+              onPress={() =>
+                togglePurchased(item.id)
+              }
               disabled={finishingTrip}
             >
               <Text style={styles.checkbox}>
@@ -600,7 +755,8 @@ export default function ShoppingScreen() {
               <Text
                 style={[
                   styles.itemName,
-                  item.purchased && styles.purchased,
+                  item.purchased &&
+                    styles.purchased,
                 ]}
                 numberOfLines={2}
               >
@@ -610,15 +766,16 @@ export default function ShoppingScreen() {
 
             <View style={styles.priceColumn}>
               <Text style={styles.itemPrice}>
-                {money(item.price * (item.quantity ?? 1))}
+                {money(
+                  item.price * item.quantity
+                )}
               </Text>
 
               <Text style={styles.quantityText}>
-                {item.quantity ?? 1} × {money(item.price)}
+                {item.quantity} × {money(item.price)}
               </Text>
             </View>
 
-            {/* EDIT BUTTON */}
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => openEditItem(item)}
@@ -632,7 +789,6 @@ export default function ShoppingScreen() {
               />
             </TouchableOpacity>
 
-            {/* DELETE BUTTON */}
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => deleteItem(item.id)}
@@ -664,7 +820,11 @@ export default function ShoppingScreen() {
       >
         <KeyboardAvoidingView
           style={styles.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={
+            Platform.OS === 'ios'
+              ? 'padding'
+              : undefined
+          }
         >
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
@@ -674,7 +834,6 @@ export default function ShoppingScreen() {
 
               <TouchableOpacity
                 onPress={closeEditItem}
-                accessibilityLabel="Close edit item"
               >
                 <Ionicons
                   name="close"
@@ -693,7 +852,6 @@ export default function ShoppingScreen() {
               value={editName}
               onChangeText={setEditName}
               placeholder="Item name"
-              autoFocus
             />
 
             <View style={styles.inputRow}>
@@ -761,6 +919,11 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     paddingBottom: 60,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   title: {
     fontSize: 26,
@@ -976,8 +1139,6 @@ const styles = StyleSheet.create({
     color: '#98a2b3',
     marginTop: 25,
   },
-
-  // EDIT MODAL
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
