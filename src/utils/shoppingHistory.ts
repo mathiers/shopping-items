@@ -8,6 +8,7 @@ export type PurchasedItem = {
   name: string;
   price: number;
   quantity: number;
+  category?: string;
 };
 
 export type ShoppingTrip = {
@@ -19,7 +20,23 @@ export type ShoppingTrip = {
 
 export async function getShoppingHistory(): Promise<ShoppingTrip[]> {
   const saved = await AsyncStorage.getItem(HISTORY_KEY);
-  return saved ? JSON.parse(saved) : [];
+
+  if (!saved) return [];
+
+  const parsed: ShoppingTrip[] = JSON.parse(saved);
+
+  if (!Array.isArray(parsed)) {
+    throw new Error('Invalid shopping history data');
+  }
+
+  return parsed.map(trip => ({
+    ...trip,
+    items: (trip.items || []).map(item => ({
+      ...item,
+      quantity: item.quantity ?? 1,
+      category: item.category || 'Other',
+    })),
+  }));
 }
 
 export async function saveShoppingTrip(
@@ -29,11 +46,17 @@ export async function saveShoppingTrip(
     throw new Error('No purchased items to save');
   }
 
+  const normalizedItems = items.map(item => ({
+    ...item,
+    quantity: item.quantity ?? 1,
+    category: item.category || 'Other',
+  }));
+
   const trip: ShoppingTrip = {
     id: `${Date.now()}-${Math.random()}`,
     date: new Date().toISOString(),
-    items,
-    total: items.reduce(
+    items: normalizedItems,
+    total: normalizedItems.reduce(
       (sum, item) => sum + item.price * item.quantity,
       0
     ),

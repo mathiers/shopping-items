@@ -508,6 +508,10 @@ export default function ShoppingScreen() {
                   name: item.name,
                   price: item.price,
                   quantity: item.quantity,
+                  category: categoryByName(
+                    categories,
+                    item.category
+                  ).name,
                 }))
               );
 

@@ -1,5 +1,9 @@
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   View,
@@ -11,9 +15,9 @@ import {
   Alert,
 } from 'react-native';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
   getShoppingHistory,
@@ -21,9 +25,14 @@ import {
   HISTORY_KEY,
 } from '../utils/shoppingHistory';
 
-// Existing storage keys - do not change
-const SHOPPING_ITEMS_KEY = '@shopping_items_v2';
-const OLD_SHOPPING_ITEMS_KEY = '@shopping_items';
+import {
+  Category,
+  DEFAULT_CATEGORIES,
+  getCategories,
+  categoryByName,
+  ITEMS_KEY,
+  OLD_ITEMS_KEY,
+} from '../utils/shoppingCategories';
 
 type Period = 'weekly' | 'monthly' | 'yearly';
 
@@ -38,146 +47,158 @@ type ActiveShoppingItem = {
   price: number;
   quantity: number;
   purchased: boolean;
+  category: string;
 };
+
+type CategorySpending = {
+  category: Category;
+  amount: number;
+  count: number;
+};
+
+type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
 const money = (value: number) => `£${value.toFixed(2)}`;
 
-function startOfDay(date: Date): Date {
-  return new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate()
-  );
-}
+const iconName = (value: string): IconName =>
+  value as IconName;
+
+const newId = () => `${Date.now()}-${Math.random()}`;
 
 function buildChart(
   trips: ShoppingTrip[],
   period: Period
 ): ChartBar[] {
   const now = new Date();
-  const today = startOfDay(now);
-
-  let bars: ChartBar[] = [];
 
   if (period === 'weekly') {
-    // Monday to Sunday of the current calendar week
-    const mondayOffset = (today.getDay() + 6) % 7;
+    const monday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
 
-    const start = new Date(today);
-    start.setDate(today.getDate() - mondayOffset);
+    const day = (monday.getDay() + 6) % 7;
+    monday.setDate(monday.getDate() - day);
 
-    const end = new Date(start);
-    end.setDate(start.getDate() + 7);
-
-    const names = [
+    const labels = [
       'Mon', 'Tue', 'Wed', 'Thu',
       'Fri', 'Sat', 'Sun',
     ];
 
-    bars = names.map(label => ({
-      label,
-      value: 0,
-    }));
+    return labels.map((label, index) => {
+      const start = new Date(monday);
+      start.setDate(monday.getDate() + index);
 
-    for (const trip of trips) {
+      const end = new Date(start);
+      end.setDate(start.getDate() + 1);
+
+      const value = trips.reduce((sum, trip) => {
+        const date = new Date(trip.date);
+
+        return date >= start && date < end
+          ? sum + trip.total
+          : sum;
+      }, 0);
+
+      return { label, value };
+    });
+  }
+
+  if (period === 'monthly') {
+    return Array.from({ length: 6 }, (_, index) => {
+      const start = new Date(
+        now.getFullYear(),
+        now.getMonth() - (5 - index),
+        1
+      );
+
+      const end = new Date(
+        start.getFullYear(),
+        start.getMonth() + 1,
+        1
+      );
+
+      const value = trips.reduce((sum, trip) => {
+        const date = new Date(trip.date);
+
+        return date >= start && date < end
+          ? sum + trip.total
+          : sum;
+      }, 0);
+
+      return {
+        label: start.toLocaleDateString('en-GB', {
+          month: 'short',
+        }),
+        value,
+      };
+    });
+  }
+
+  return Array.from({ length: 5 }, (_, index) => {
+    const year = now.getFullYear() - (4 - index);
+
+    const value = trips.reduce((sum, trip) => {
       const date = new Date(trip.date);
 
-      if (
-        Number.isNaN(date.getTime()) ||
-        date < start ||
-        date >= end
-      ) {
-        continue;
-      }
+      return date.getFullYear() === year
+        ? sum + trip.total
+        : sum;
+    }, 0);
 
-      const index = (date.getDay() + 6) % 7;
+    return {
+      label: String(year),
+      value,
+    };
+  });
+}
 
-      bars[index].value += trip.total;
-    }
-  } else if (period === 'monthly') {
-    // Current month and previous five months
-    const start = new Date(
-      today.getFullYear(),
-      today.getMonth() - 5,
-      1
-    );
+function buildCategorySpending(
+  trips: ShoppingTrip[],
+  categories: Category[]
+): CategorySpending[] {
+  const totals = new Map<
+    string,
+    { amount: number; count: number }
+  >();
 
-    const end = new Date(
-      today.getFullYear(),
-      today.getMonth() + 1,
-      1
-    );
+  for (const trip of trips) {
+    for (const item of trip.items) {
+      const category = categoryByName(
+        categories,
+        item.category
+      );
 
-    bars = Array.from(
-      { length: 6 },
-      (_, index) => {
-        const date = new Date(
-          start.getFullYear(),
-          start.getMonth() + index,
-          1
-        );
+      const current = totals.get(category.id) || {
+        amount: 0,
+        count: 0,
+      };
 
-        return {
-          label: date.toLocaleDateString('en-GB', {
-            month: 'short',
-          }),
-          value: 0,
-        };
-      }
-    );
+      current.amount += item.price * item.quantity;
+      current.count += item.quantity;
 
-    for (const trip of trips) {
-      const date = new Date(trip.date);
-
-      if (
-        Number.isNaN(date.getTime()) ||
-        date < start ||
-        date >= end
-      ) {
-        continue;
-      }
-
-      const index =
-        (date.getFullYear() - start.getFullYear()) * 12 +
-        date.getMonth() -
-        start.getMonth();
-
-      if (index >= 0 && index < bars.length) {
-        bars[index].value += trip.total;
-      }
-    }
-  } else {
-    // Current year and previous four years
-    const firstYear = today.getFullYear() - 4;
-
-    bars = Array.from(
-      { length: 5 },
-      (_, index) => ({
-        label: String(firstYear + index),
-        value: 0,
-      })
-    );
-
-    for (const trip of trips) {
-      const date = new Date(trip.date);
-
-      if (Number.isNaN(date.getTime())) continue;
-
-      const index = date.getFullYear() - firstYear;
-
-      if (index >= 0 && index < bars.length) {
-        bars[index].value += trip.total;
-      }
+      totals.set(category.id, current);
     }
   }
 
-  return bars;
+  return categories
+    .filter(category => totals.has(category.id))
+    .map(category => ({
+      category,
+      amount: totals.get(category.id)!.amount,
+      count: totals.get(category.id)!.count,
+    }))
+    .sort((a, b) => b.amount - a.amount);
 }
 
 export default function HistoryScreen() {
   const [trips, setTrips] = useState<ShoppingTrip[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [categories, setCategories] = useState<Category[]>(
+    DEFAULT_CATEGORIES
+  );
 
+  const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>('weekly');
 
   const [deletingId, setDeletingId] = useState<string | null>(
@@ -187,41 +208,42 @@ export default function HistoryScreen() {
   const [copyingTripId, setCopyingTripId] =
     useState<string | null>(null);
 
-  // Prevent overlapping storage operations
   const deletingRef = useRef(false);
   const copyingRef = useRef(false);
 
-  // Refresh history when screen receives focus
   useFocusEffect(
     useCallback(() => {
       let active = true;
 
-      const loadHistory = async () => {
+      const load = async () => {
         try {
           setLoading(true);
 
-          const saved = await getShoppingHistory();
+          const [savedTrips, savedCategories] =
+            await Promise.all([
+              getShoppingHistory(),
+              getCategories(),
+            ]);
 
-          if (active) {
-            setTrips(saved);
-          }
+          if (!active) return;
+
+          setTrips(savedTrips);
+          setCategories(savedCategories);
         } catch (error) {
           console.error('History loading error:', error);
 
           if (active) {
             Alert.alert(
-              'Loading error',
+              'Loading failed',
               'Could not load shopping history.'
             );
           }
         } finally {
-          if (active) {
-            setLoading(false);
-          }
+          if (active) setLoading(false);
         }
       };
 
-      loadHistory();
+      load();
 
       return () => {
         active = false;
@@ -229,7 +251,6 @@ export default function HistoryScreen() {
     }, [])
   );
 
-  // Analytics calculations
   const chartData = buildChart(trips, period);
 
   const chartTotal = chartData.reduce(
@@ -237,9 +258,9 @@ export default function HistoryScreen() {
     0
   );
 
-  const maxValue = Math.max(
+  const maxChartValue = Math.max(
     ...chartData.map(bar => bar.value),
-    0
+    1
   );
 
   const average =
@@ -247,12 +268,27 @@ export default function HistoryScreen() {
       ? chartTotal / chartData.length
       : 0;
 
+  const categorySpending = buildCategorySpending(
+    trips,
+    categories
+  );
+
+  const totalCategorySpend = categorySpending.reduce(
+    (sum, entry) => sum + entry.amount,
+    0
+  );
+
+  const maxCategorySpend = Math.max(
+    ...categorySpending.map(entry => entry.amount),
+    1
+  );
+
   const periodDescription =
     period === 'weekly'
-      ? 'Current week · Monday to Sunday'
+      ? 'This week'
       : period === 'monthly'
-      ? 'Current month and previous 5 months'
-      : 'Current year and previous 4 years';
+        ? 'Last 6 months'
+        : 'Last 5 years';
 
   // SHOP AGAIN
   const shopAgain = (trip: ShoppingTrip) => {
@@ -260,77 +296,69 @@ export default function HistoryScreen() {
 
     Alert.alert(
       'Shop Again?',
-      `Add ${trip.items.length} items from this shopping trip to your current shopping list?\n\nAll copied items will be marked as not purchased. Your existing shopping items and original History record will be preserved.\n\nItems already on your list may appear twice.`,
+      `Add ${trip.items.length} items from this trip to your current shopping list? Existing items will remain. Duplicates may be added.`,
       [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
+        { text: 'Cancel', style: 'cancel' },
         {
           text: 'Add to Shopping List',
           onPress: async () => {
-            if (
-              copyingRef.current ||
-              deletingRef.current
-            ) {
-              return;
-            }
+            if (copyingRef.current) return;
 
             copyingRef.current = true;
             setCopyingTripId(trip.id);
 
             try {
-              const [currentData, oldData] =
+              const [current, previous, latestCategories] =
                 await Promise.all([
-                  AsyncStorage.getItem(SHOPPING_ITEMS_KEY),
-                  AsyncStorage.getItem(
-                    OLD_SHOPPING_ITEMS_KEY
-                  ),
+                  AsyncStorage.getItem(ITEMS_KEY),
+                  AsyncStorage.getItem(OLD_ITEMS_KEY),
+                  getCategories(),
                 ]);
 
-              const savedData = currentData ?? oldData;
+              const parsed = JSON.parse(
+                current ?? previous ?? '[]'
+              );
 
-              const existingItems: ActiveShoppingItem[] =
-                savedData ? JSON.parse(savedData) : [];
-
-              if (!Array.isArray(existingItems)) {
+              if (!Array.isArray(parsed)) {
                 throw new Error(
-                  'Invalid shopping list data'
+                  'Invalid existing shopping list'
                 );
               }
 
-              // Copy items with fresh unique IDs
+              const existingItems: ActiveShoppingItem[] =
+                parsed;
+
               const copiedItems: ActiveShoppingItem[] =
-                trip.items.map((item, index) => ({
-                  id: `${Date.now()}-${index}-${Math.random()}`,
+                trip.items.map(item => ({
+                  id: newId(),
                   name: item.name,
                   price: item.price,
                   quantity: item.quantity ?? 1,
                   purchased: false,
+                  category: categoryByName(
+                    latestCategories,
+                    item.category
+                  ).name,
                 }));
 
-              // Preserve existing shopping items
-              const updatedItems = [
-                ...existingItems,
-                ...copiedItems,
-              ];
-
               await AsyncStorage.setItem(
-                SHOPPING_ITEMS_KEY,
-                JSON.stringify(updatedItems)
+                ITEMS_KEY,
+                JSON.stringify([
+                  ...existingItems,
+                  ...copiedItems,
+                ])
               );
 
               Alert.alert(
                 'Shopping List Updated!',
-                `${copiedItems.length} items added successfully.\n\nOpen the Shop tab to start shopping.`,
-                [{ text: 'OK' }]
+                `${copiedItems.length} items added successfully. Open the Shop tab to see them.`
               );
             } catch (error) {
               console.error('Shop Again error:', error);
 
               Alert.alert(
                 'Unable to copy items',
-                'Your shopping list could not be updated. Please try again.'
+                'Your shopping list could not be updated.'
               );
             } finally {
               copyingRef.current = false;
@@ -347,51 +375,38 @@ export default function HistoryScreen() {
     if (deletingRef.current || copyingRef.current) return;
 
     Alert.alert(
-      'Permanently delete shopping trip?',
-      `You are about to delete the shopping trip from ${new Date(
-        trip.date
-      ).toLocaleDateString('en-GB')} worth ${money(
-        trip.total
-      )}.\n\nThis action is permanent. You will NOT be able to recover this shopping record once deleted.`,
+      'Delete Shopping Trip?',
+      'This permanently removes the trip from History and updates spending analytics. This cannot be undone.',
       [
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Delete Permanently',
+          text: 'Delete Trip',
           style: 'destructive',
           onPress: async () => {
-            if (
-              deletingRef.current ||
-              copyingRef.current
-            ) {
-              return;
-            }
+            if (deletingRef.current) return;
 
             deletingRef.current = true;
             setDeletingId(trip.id);
 
             try {
-              const savedTrips =
-                await getShoppingHistory();
+              const latest = await getShoppingHistory();
 
-              const updatedTrips = savedTrips.filter(
-                savedTrip => savedTrip.id !== trip.id
+              const updated = latest.filter(
+                item => item.id !== trip.id
               );
 
               await AsyncStorage.setItem(
                 HISTORY_KEY,
-                JSON.stringify(updatedTrips)
+                JSON.stringify(updated)
               );
 
-              setTrips(updatedTrips);
+              setTrips(updated);
             } catch (error) {
               console.error('Delete trip error:', error);
 
               Alert.alert(
                 'Delete failed',
-                'Could not delete this shopping trip.'
+                'Could not delete this trip.'
               );
             } finally {
               deletingRef.current = false;
@@ -405,11 +420,14 @@ export default function HistoryScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loading}>
+      <View style={styles.center}>
         <ActivityIndicator
           size="large"
-          color="#16834a"
+          color="#15803d"
         />
+        <Text style={styles.loadingText}>
+          Loading shopping history...
+        </Text>
       </View>
     );
   }
@@ -424,275 +442,303 @@ export default function HistoryScreen() {
       </Text>
 
       <Text style={styles.subtitle}>
-        Your purchases and spending insights.
+        Review trips, spending and past purchases
       </Text>
 
-      {/* SPENDING ANALYTICS */}
-      <View style={styles.analyticsCard}>
-        <View style={styles.analyticsHeader}>
-          <View>
-            <Text style={styles.analyticsEyebrow}>
-              SPENDING ANALYTICS
-            </Text>
+      {/* PERIOD ANALYTICS */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>
+          Spending Analytics
+        </Text>
 
-            <Text style={styles.analyticsTitle}>
-              Expenditure Overview
-            </Text>
-          </View>
-
-          <Ionicons
-            name="stats-chart-outline"
-            size={25}
-            color="#16834a"
-          />
-        </View>
-
-        {/* PERIOD SELECTOR */}
-        <View style={styles.periodSelector}>
+        <View style={styles.periodRow}>
           {(
-            [
-              ['weekly', 'Weekly'],
-              ['monthly', 'Monthly'],
-              ['yearly', 'Yearly'],
-            ] as const
-          ).map(([value, label]) => (
+            ['weekly', 'monthly', 'yearly'] as Period[]
+          ).map(option => (
             <TouchableOpacity
-              key={value}
+              key={option}
               style={[
                 styles.periodButton,
-                period === value && styles.periodActive,
+                period === option &&
+                  styles.periodButtonActive,
               ]}
-              onPress={() => setPeriod(value)}
+              onPress={() => setPeriod(option)}
             >
               <Text
                 style={[
                   styles.periodText,
-                  period === value &&
+                  period === option &&
                     styles.periodTextActive,
                 ]}
               >
-                {label}
+                {option.charAt(0).toUpperCase() +
+                  option.slice(1)}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* TOTAL SPENDING */}
-        <View style={styles.totalCard}>
-          <Text style={styles.totalLabel}>
-            Total expenditure
-          </Text>
+        <Text style={styles.metricLabel}>
+          {periodDescription} spending
+        </Text>
 
-          <Text style={styles.totalAmount}>
-            {money(chartTotal)}
-          </Text>
+        <Text style={styles.metricValue}>
+          {money(chartTotal)}
+        </Text>
 
-          <Text style={styles.totalDescription}>
-            {periodDescription}
-          </Text>
-        </View>
-
-        {/* BAR CHART */}
         <View style={styles.chart}>
-          {chartData.map((bar, index) => {
-            const height =
-              maxValue > 0
-                ? (bar.value / maxValue) * 150
-                : 0;
-
-            const isHighest =
-              maxValue > 0 &&
-              bar.value === maxValue;
-
-            return (
-              <View
-                key={`${period}-${index}`}
-                style={styles.barColumn}
+          {chartData.map((bar, index) => (
+            <View
+              key={`${bar.label}-${index}`}
+              style={styles.barColumn}
+            >
+              <Text
+                style={styles.barValue}
+                numberOfLines={1}
               >
-                <View style={styles.barArea}>
-                  {bar.value > 0 && (
-                    <Text
-                      style={styles.barValue}
-                      numberOfLines={1}
-                      adjustsFontSizeToFit
-                    >
-                      {bar.value >= 1000
-                        ? `£${(
-                            bar.value / 1000
-                          ).toFixed(1)}k`
-                        : `£${Math.round(bar.value)}`}
-                    </Text>
-                  )}
+                {bar.value > 0
+                  ? money(bar.value)
+                  : ''}
+              </Text>
 
-                  <View
-                    style={[
-                      styles.bar,
-                      {
-                        height,
-                        backgroundColor: isHighest
-                          ? '#15803d'
-                          : '#86c9a0',
-                      },
-                    ]}
-                  />
-                </View>
-
-                <Text
-                  style={styles.barLabel}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                >
-                  {bar.label}
-                </Text>
+              <View style={styles.barTrack}>
+                <View
+                  style={[
+                    styles.barFill,
+                    {
+                      height: `${
+                        (bar.value / maxChartValue) * 100
+                      }%`,
+                    },
+                  ]}
+                />
               </View>
-            );
-          })}
+
+              <Text
+                style={styles.barLabel}
+                numberOfLines={1}
+              >
+                {bar.label}
+              </Text>
+            </View>
+          ))}
         </View>
 
-        {/* ANALYTICS FOOTER */}
-        <View style={styles.chartFooter}>
-          <View>
-            <Text style={styles.footerLabel}>
-              Average per period
-            </Text>
-
-            <Text style={styles.footerValue}>
-              {money(average)}
-            </Text>
-          </View>
-
-          <View style={styles.legend}>
-            <View style={styles.legendDot} />
-
-            <Text style={styles.legendText}>
-              Completed trips
-            </Text>
-          </View>
-        </View>
-
-        <Text style={styles.analyticsNote}>
-          Based on saved shopping trips. Deleted
-          trips are excluded automatically.
+        <Text style={styles.averageText}>
+          Average per chart period: {money(average)}
         </Text>
       </View>
 
-      {/* HISTORY SECTION */}
+      {/* CATEGORY SPENDING */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>
+          Spending by Category
+        </Text>
+
+        <Text style={styles.hint}>
+          All completed trips, grouped by category
+        </Text>
+
+        <Text style={styles.categoryTotal}>
+          {money(totalCategorySpend)}
+        </Text>
+
+        {categorySpending.length === 0 ? (
+          <Text style={styles.emptySection}>
+            Finish a shopping trip to see your category
+            spending.
+          </Text>
+        ) : (
+          categorySpending.map(entry => (
+            <View
+              key={entry.category.id}
+              style={styles.categoryEntry}
+            >
+              <View style={styles.categoryHeader}>
+                <View style={styles.categoryTitleRow}>
+                  <View
+                    style={[
+                      styles.categoryIcon,
+                      {
+                        backgroundColor:
+                          entry.category.background,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name={iconName(entry.category.icon)}
+                      size={19}
+                      color={entry.category.accent}
+                    />
+                  </View>
+
+                  <View>
+                    <Text style={styles.categoryName}>
+                      {entry.category.name}
+                    </Text>
+
+                    <Text style={styles.categoryCount}>
+                      {entry.count} units purchased
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.categoryAmount}>
+                  {money(entry.amount)}
+                </Text>
+              </View>
+
+              <View style={styles.categoryTrack}>
+                <View
+                  style={[
+                    styles.categoryFill,
+                    {
+                      backgroundColor:
+                        entry.category.accent,
+                      width: `${
+                        (entry.amount / maxCategorySpend) *
+                        100
+                      }%`,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+
+      {/* COMPLETED TRIPS */}
       <Text style={styles.sectionTitle}>
-        Completed Shopping Trips
+        Completed Trips ({trips.length})
       </Text>
 
       {trips.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>
-            No shopping trips yet
-          </Text>
-
-          <Text style={styles.emptyText}>
-            Complete a shopping trip in the Shop tab
-            to see your purchases and analytics here.
+        <View style={styles.card}>
+          <Text style={styles.emptySection}>
+            No completed shopping trips yet.
           </Text>
         </View>
       ) : (
         trips.map(trip => (
-          <View
-            key={trip.id}
-            style={styles.tripCard}
-          >
-            <View style={styles.headerRow}>
-              <Text style={styles.tripTitle}>
-                Shopping Trip
-              </Text>
+          <View key={trip.id} style={styles.tripCard}>
+            <View style={styles.tripHeader}>
+              <View>
+                <Text style={styles.tripDate}>
+                  {new Date(trip.date).toLocaleDateString(
+                    'en-GB',
+                    {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    }
+                  )}
+                </Text>
 
-              <Text style={styles.date}>
-                {new Date(
-                  trip.date
-                ).toLocaleDateString('en-GB')}
+                <Text style={styles.tripCount}>
+                  {trip.items.length} items
+                </Text>
+              </View>
+
+              <Text style={styles.tripTotal}>
+                {money(trip.total)}
               </Text>
             </View>
 
-            <Text style={styles.tripSummary}>
-              {trip.items.length} purchased items
-            </Text>
+            {trip.items.map((item, index) => {
+              const category = categoryByName(
+                categories,
+                item.category
+              );
 
-            <Text style={styles.tripTotal}>
-              {money(trip.total)}
-            </Text>
+              return (
+                <View
+                  key={`${item.id}-${index}`}
+                  style={styles.tripItem}
+                >
+                  <View
+                    style={[
+                      styles.tripItemIcon,
+                      {
+                        backgroundColor:
+                          category.background,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name={iconName(category.icon)}
+                      size={17}
+                      color={category.accent}
+                    />
+                  </View>
 
-            <View style={styles.divider} />
+                  <View style={styles.tripItemInfo}>
+                    <Text style={styles.tripItemName}>
+                      {item.name}
+                    </Text>
 
-            {/* ITEMS IN TRIP */}
-            {trip.items.map(item => (
-              <View
-                key={item.id}
-                style={styles.itemRow}
+                    <Text style={styles.tripItemDetail}>
+                      {category.name} ·{' '}
+                      {item.quantity} × {money(item.price)}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.tripItemTotal}>
+                    {money(
+                      item.price * item.quantity
+                    )}
+                  </Text>
+                </View>
+              );
+            })}
+
+            <View style={styles.tripActions}>
+              <TouchableOpacity
+                style={[
+                  styles.shopAgainButton,
+                  copyingTripId === trip.id &&
+                    styles.disabled,
+                ]}
+                onPress={() => shopAgain(trip)}
+                disabled={
+                  copyingTripId !== null ||
+                  deletingId !== null
+                }
               >
-                <Text style={styles.itemName}>
-                  {item.name} × {item.quantity}
+                <Ionicons
+                  name="refresh-outline"
+                  size={17}
+                  color="#ffffff"
+                />
+
+                <Text style={styles.shopAgainText}>
+                  {copyingTripId === trip.id
+                    ? 'Adding...'
+                    : 'Shop Again'}
                 </Text>
+              </TouchableOpacity>
 
-                <Text style={styles.itemPrice}>
-                  {money(
-                    item.price * item.quantity
-                  )}
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => deleteTrip(trip)}
+                disabled={
+                  copyingTripId !== null ||
+                  deletingId !== null
+                }
+              >
+                <Ionicons
+                  name="trash-outline"
+                  size={17}
+                  color="#dc2626"
+                />
+
+                <Text style={styles.deleteText}>
+                  {deletingId === trip.id
+                    ? 'Deleting...'
+                    : 'Delete Trip'}
                 </Text>
-              </View>
-            ))}
-
-            <View style={styles.divider} />
-
-            {/* SHOP AGAIN BUTTON */}
-            <TouchableOpacity
-              style={[
-                styles.shopAgainButton,
-                (copyingTripId !== null ||
-                  deletingId !== null) &&
-                  styles.disabledButton,
-              ]}
-              onPress={() => shopAgain(trip)}
-              disabled={
-                copyingTripId !== null ||
-                deletingId !== null
-              }
-            >
-              <Ionicons
-                name="refresh-outline"
-                size={19}
-                color="#ffffff"
-              />
-
-              <Text style={styles.shopAgainButtonText}>
-                {copyingTripId === trip.id
-                  ? 'Adding Items...'
-                  : 'Shop Again'}
-              </Text>
-            </TouchableOpacity>
-
-            {/* DELETE BUTTON */}
-            <TouchableOpacity
-              style={[
-                styles.deleteButton,
-                (deletingId !== null ||
-                  copyingTripId !== null) &&
-                  styles.disabledButton,
-              ]}
-              onPress={() => deleteTrip(trip)}
-              disabled={
-                deletingId !== null ||
-                copyingTripId !== null
-              }
-            >
-              <Ionicons
-                name="trash-outline"
-                size={18}
-                color="#dc2626"
-              />
-
-              <Text style={styles.deleteButtonText}>
-                {deletingId === trip.id
-                  ? 'Deleting...'
-                  : 'Delete Trip'}
-              </Text>
-            </TouchableOpacity>
+              </TouchableOpacity>
+            </View>
           </View>
         ))
       )}
@@ -705,332 +751,289 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f7fa',
   },
-
   content: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 60,
   },
-
-  loading: {
+  center: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f5f7fa',
   },
-
+  loadingText: {
+    marginTop: 12,
+    color: '#667085',
+  },
   title: {
     fontSize: 26,
     fontWeight: 'bold',
     color: '#153c2e',
-    marginBottom: 4,
   },
-
   subtitle: {
-    color: '#667085',
     fontSize: 13,
+    color: '#667085',
+    marginTop: 4,
     marginBottom: 18,
   },
-
-  // ANALYTICS
-  analyticsCard: {
+  card: {
     backgroundColor: '#ffffff',
-    borderRadius: 18,
+    borderRadius: 16,
     padding: 16,
-    marginBottom: 26,
-    elevation: 3,
+    marginBottom: 18,
+    elevation: 2,
   },
-
-  analyticsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-
-  analyticsEyebrow: {
-    color: '#16834a',
-    fontSize: 10,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-    marginBottom: 5,
-  },
-
-  analyticsTitle: {
-    fontSize: 19,
+  cardTitle: {
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#153c2e',
+    marginBottom: 12,
   },
-
-  periodSelector: {
+  periodRow: {
     flexDirection: 'row',
-    backgroundColor: '#f1f5f9',
-    padding: 4,
-    borderRadius: 12,
-    marginBottom: 16,
+    gap: 8,
+    marginBottom: 18,
   },
-
   periodButton: {
     flex: 1,
     paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
     alignItems: 'center',
-    borderRadius: 9,
   },
-
-  periodActive: {
+  periodButtonActive: {
     backgroundColor: '#15803d',
   },
-
   periodText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-    color: '#64748b',
+    color: '#475569',
   },
-
   periodTextActive: {
     color: '#ffffff',
   },
-
-  totalCard: {
-    backgroundColor: '#f0fdf4',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 18,
-  },
-
-  totalLabel: {
-    color: '#667085',
+  metricLabel: {
     fontSize: 12,
-    marginBottom: 5,
-  },
-
-  totalAmount: {
-    fontSize: 30,
-    fontWeight: 'bold',
-    color: '#153c2e',
-  },
-
-  totalDescription: {
     color: '#667085',
-    fontSize: 11,
-    marginTop: 5,
   },
-
+  metricValue: {
+    fontSize: 27,
+    fontWeight: 'bold',
+    color: '#15803d',
+    marginTop: 4,
+  },
   chart: {
     flexDirection: 'row',
+    height: 180,
     alignItems: 'flex-end',
-    height: 190,
-    marginBottom: 12,
+    gap: 5,
+    marginTop: 18,
+    marginBottom: 14,
   },
-
   barColumn: {
     flex: 1,
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    minWidth: 0,
   },
-
-  barArea: {
-    height: 170,
-    width: '100%',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-
-  bar: {
-    width: '65%',
-    maxWidth: 34,
-    minHeight: 0,
-    borderTopLeftRadius: 6,
-    borderTopRightRadius: 6,
-  },
-
   barValue: {
-    color: '#475569',
-    fontSize: 10,
-    fontWeight: '600',
-    textAlign: 'center',
-    width: '100%',
+    fontSize: 9,
+    color: '#64748b',
     marginBottom: 5,
   },
-
+  barTrack: {
+    height: 125,
+    width: '75%',
+    maxWidth: 35,
+    justifyContent: 'flex-end',
+    backgroundColor: '#edf2f7',
+    borderRadius: 5,
+    overflow: 'hidden',
+  },
+  barFill: {
+    backgroundColor: '#16a34a',
+    width: '100%',
+    borderRadius: 5,
+  },
   barLabel: {
     fontSize: 10,
-    color: '#64748b',
-    textAlign: 'center',
-    marginTop: 8,
-    width: '100%',
-  },
-
-  chartFooter: {
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  footerLabel: {
-    fontSize: 11,
     color: '#667085',
-    marginBottom: 4,
+    marginTop: 7,
   },
-
-  footerValue: {
-    fontSize: 17,
+  averageText: {
+    fontSize: 12,
+    color: '#667085',
+    marginTop: 6,
+  },
+  hint: {
+    color: '#667085',
+    fontSize: 12,
+    marginBottom: 12,
+  },
+  categoryTotal: {
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#153c2e',
+    marginBottom: 18,
   },
-
-  legend: {
+  categoryEntry: {
+    marginBottom: 17,
+  },
+  categoryHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
-
-  legendDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: '#15803d',
-    marginRight: 6,
+  categoryTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
   },
-
-  legendText: {
+  categoryIcon: {
+    width: 39,
+    height: 39,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categoryName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#344054',
+  },
+  categoryCount: {
     fontSize: 11,
     color: '#667085',
+    marginTop: 3,
   },
-
-  analyticsNote: {
-    fontSize: 10,
-    color: '#94a3b8',
-    marginTop: 12,
-    lineHeight: 15,
+  categoryAmount: {
+    fontWeight: 'bold',
+    color: '#153c2e',
+    fontSize: 14,
   },
-
-  // HISTORY
+  categoryTrack: {
+    height: 7,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    overflow: 'hidden',
+  },
+  categoryFill: {
+    height: '100%',
+    borderRadius: 10,
+  },
+  emptySection: {
+    color: '#98a2b3',
+    textAlign: 'center',
+    paddingVertical: 18,
+  },
   sectionTitle: {
     fontSize: 19,
     fontWeight: 'bold',
     color: '#153c2e',
-    marginBottom: 14,
+    marginBottom: 13,
   },
-
-  emptyCard: {
-    backgroundColor: '#ffffff',
-    padding: 24,
-    borderRadius: 16,
-    alignItems: 'center',
-  },
-
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#153c2e',
-    marginBottom: 8,
-  },
-
-  emptyText: {
-    color: '#667085',
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-
   tripCard: {
     backgroundColor: '#ffffff',
     borderRadius: 16,
-    padding: 18,
-    marginBottom: 16,
+    padding: 16,
+    marginBottom: 14,
     elevation: 2,
   },
-
-  headerRow: {
+  tripHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+    paddingBottom: 12,
+    marginBottom: 10,
   },
-
-  tripTitle: {
-    fontSize: 18,
+  tripDate: {
+    fontSize: 15,
     fontWeight: 'bold',
     color: '#153c2e',
   },
-
-  date: {
-    color: '#667085',
+  tripCount: {
     fontSize: 12,
-  },
-
-  tripSummary: {
     color: '#667085',
-    marginTop: 8,
+    marginTop: 4,
   },
-
   tripTotal: {
-    fontSize: 25,
+    fontSize: 19,
     fontWeight: 'bold',
-    color: '#16834a',
-    marginTop: 6,
+    color: '#15803d',
   },
-
-  divider: {
-    height: 1,
-    backgroundColor: '#e5e7eb',
-    marginVertical: 14,
-  },
-
-  itemRow: {
+  tripItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
+    alignItems: 'center',
+    paddingVertical: 9,
+    gap: 10,
   },
-
-  itemName: {
-    color: '#344054',
+  tripItemIcon: {
+    width: 35,
+    height: 35,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tripItemInfo: {
     flex: 1,
   },
-
-  itemPrice: {
+  tripItemName: {
     color: '#344054',
+    fontSize: 13,
     fontWeight: '600',
   },
-
-  // SHOP AGAIN
+  tripItemDetail: {
+    color: '#667085',
+    fontSize: 11,
+    marginTop: 4,
+  },
+  tripItemTotal: {
+    color: '#344054',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  tripActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 15,
+  },
   shopAgainButton: {
+    flex: 1,
     backgroundColor: '#15803d',
     borderRadius: 10,
-    padding: 14,
+    padding: 12,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 10,
+    gap: 7,
   },
-
-  shopAgainButtonText: {
+  shopAgainText: {
     color: '#ffffff',
-    fontSize: 15,
+    fontSize: 12,
     fontWeight: 'bold',
   },
-
-  // DELETE
   deleteButton: {
-    backgroundColor: '#fef2f2',
+    flex: 1,
     borderWidth: 1,
     borderColor: '#fecaca',
+    backgroundColor: '#fff7f7',
     borderRadius: 10,
-    padding: 13,
+    padding: 12,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
   },
-
-  deleteButtonText: {
+  deleteText: {
     color: '#dc2626',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: 'bold',
   },
-
-  disabledButton: {
+  disabled: {
     opacity: 0.5,
   },
 });
