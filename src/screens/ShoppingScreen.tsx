@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,9 @@ import {
   StatusBar,
   Alert,
 } from 'react-native';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { saveShoppingTrip } from '../utils/shoppingHistory';
 
 type ShoppingItem = {
   id: string;
@@ -22,27 +24,37 @@ type ShoppingItem = {
 };
 
 const STORAGE_KEY = '@shopping_items_v2';
+const OLD_STORAGE_KEY = '@shopping_items';
 const BUDGET_KEY = '@shopping_budget';
 
-export default function App() {
+export default function ShoppingScreen() {
   const [budget, setBudget] = useState('100');
   const [itemName, setItemName] = useState('');
   const [itemPrice, setItemPrice] = useState('');
   const [itemQuantity, setItemQuantity] = useState('1');
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [finishingTrip, setFinishingTrip] = useState(false);
 
-  // Load saved shopping data
+  // Prevent automatic saves from racing with Finish Trip.
+  const finishingRef = useRef(false);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+
   useEffect(() => {
+    let mounted = true;
+
     const loadData = async () => {
       try {
-        // Read old storage key too, so existing items are retained
-        const savedItems =
-          (await AsyncStorage.getItem(STORAGE_KEY)) ??
-          (await AsyncStorage.getItem('@shopping_items'));
+        const [currentItems, oldItems, savedBudget] =
+          await Promise.all([
+            AsyncStorage.getItem(STORAGE_KEY),
+            AsyncStorage.getItem(OLD_STORAGE_KEY),
+            AsyncStorage.getItem(BUDGET_KEY),
+          ]);
 
-        const savedBudget =
-          await AsyncStorage.getItem(BUDGET_KEY);
+        if (!mounted) return;
+
+        const savedItems = currentItems ?? oldItems;
 
         if (savedItems !== null) {
           const parsed: ShoppingItem[] = JSON.parse(savedItems);
@@ -59,53 +71,84 @@ export default function App() {
           setBudget(savedBudget);
         }
       } catch (error) {
-        console.error('Loading failed:', error);
+        console.error('Failed to load shopping data:', error);
+        Alert.alert(
+          'Loading error',
+          'Your saved shopping list could not be loaded.'
+        );
       } finally {
-        setIsLoaded(true);
+        if (mounted) setIsLoaded(true);
       }
     };
 
     loadData();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  // Save changes automatically
+  // Serialize list writes so an older save cannot overwrite
+  // the completed trip's cleared shopping list.
+  useEffect(() => {
+    if (!isLoaded || finishingRef.current) return;
+
+    const nextItems = JSON.stringify(items);
+
+    saveQueue.current = saveQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (finishingRef.current) return;
+        await AsyncStorage.setItem(STORAGE_KEY, nextItems);
+      })
+      .catch(error => {
+        console.error('Failed to save shopping items:', error);
+      });
+  }, [items, isLoaded]);
+
   useEffect(() => {
     if (!isLoaded) return;
 
-    const saveData = async () => {
-      try {
-        await AsyncStorage.multiSet([
-          [STORAGE_KEY, JSON.stringify(items)],
-          [BUDGET_KEY, budget],
-        ]);
-      } catch (error) {
-        console.error('Saving failed:', error);
-      }
-    };
+    AsyncStorage.setItem(BUDGET_KEY, budget).catch(error => {
+      console.error('Failed to save budget:', error);
+    });
+  }, [budget, isLoaded]);
 
-    saveData();
-  }, [items, budget, isLoaded]);
+  const money = (amount: number) => `£${amount.toFixed(2)}`;
 
   const spent = items
     .filter(item => item.purchased)
     .reduce(
-      (total, item) => total + item.price * item.quantity,
+      (total, item) =>
+        total + item.price * (item.quantity ?? 1),
       0
     );
 
   const planned = items.reduce(
-    (total, item) => total + item.price * item.quantity,
+    (total, item) =>
+      total + item.price * (item.quantity ?? 1),
     0
   );
 
+  const purchasedCount =
+    items.filter(item => item.purchased).length;
+
   const budgetAmount = Number(budget) || 0;
   const remaining = budgetAmount - spent;
-  const progress =
+
+  const percentage =
     budgetAmount > 0
-      ? Math.min((spent / budgetAmount) * 100, 100)
+      ? Math.round((spent / budgetAmount) * 100)
       : 0;
 
+  const progress = Math.min(
+    Math.max(percentage, 0),
+    100
+  );
+
   const addItem = () => {
+    if (finishingRef.current) return;
+
     const price = Number(itemPrice);
     const quantity = Number(itemQuantity);
 
@@ -119,7 +162,7 @@ export default function App() {
     ) {
       Alert.alert(
         'Invalid item',
-        'Enter a name, valid price and quantity.'
+        'Enter an item name, a positive price and a whole-number quantity.'
       );
       return;
     }
@@ -139,6 +182,8 @@ export default function App() {
   };
 
   const togglePurchased = (id: string) => {
+    if (finishingRef.current) return;
+
     setItems(previous =>
       previous.map(item =>
         item.id === id
@@ -149,12 +194,89 @@ export default function App() {
   };
 
   const deleteItem = (id: string) => {
+    if (finishingRef.current) return;
+
     setItems(previous =>
       previous.filter(item => item.id !== id)
     );
   };
 
-  const money = (amount: number) => `£${amount.toFixed(2)}`;
+  const finishTrip = () => {
+    if (finishingRef.current) return;
+
+    const purchasedItems = items.filter(
+      item => item.purchased
+    );
+
+    if (purchasedItems.length === 0) {
+      Alert.alert(
+        'Nothing purchased',
+        'Tick at least one item before finishing your trip.'
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Finish shopping trip?',
+      'Purchased items will be saved to History and removed from your current list. Unpurchased items will stay.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Finish Trip',
+          onPress: async () => {
+            if (finishingRef.current) return;
+
+            finishingRef.current = true;
+            setFinishingTrip(true);
+
+            const remainingItems = items.filter(
+              item => !item.purchased
+            );
+
+            try {
+              // Wait for any previously queued list saves.
+              await saveQueue.current;
+
+              // Save the receipt before clearing purchases.
+              await saveShoppingTrip(
+                purchasedItems.map(item => ({
+                  id: item.id,
+                  name: item.name,
+                  price: item.price,
+                  quantity: item.quantity ?? 1,
+                }))
+              );
+
+              // Clear purchased items from persistent storage.
+              await AsyncStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify(remainingItems)
+              );
+
+              setItems(remainingItems);
+
+              Alert.alert(
+                'Trip saved!',
+                'Your purchased items are now in Shopping History.'
+              );
+            } catch (error) {
+              console.error('Finish trip error:', error);
+              Alert.alert(
+                'Save failed',
+                'The trip could not be completed. Check your History before trying again.'
+              );
+            } finally {
+              finishingRef.current = false;
+              setFinishingTrip(false);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -167,31 +289,42 @@ export default function App() {
         contentContainerStyle={styles.content}
         ListHeaderComponent={
           <View>
-            <Text style={styles.title}>🛒 Shopping Items</Text>
+            <Text style={styles.title}>
+              🛒 Shopping Items
+            </Text>
+
             <Text style={styles.subtitle}>
               Shop smarter. Stay on budget.
             </Text>
 
             <View style={styles.budgetCard}>
-              <Text style={styles.label}>Shopping Budget (£)</Text>
+              <Text style={styles.label}>
+                Shopping Budget (£)
+              </Text>
 
               <TextInput
                 style={styles.input}
                 value={budget}
                 onChangeText={setBudget}
                 keyboardType="decimal-pad"
+                placeholder="Enter budget"
+                editable={!finishingTrip}
               />
 
               <View style={styles.summaryRow}>
                 <View>
-                  <Text style={styles.summaryLabel}>Spent</Text>
+                  <Text style={styles.summaryLabel}>
+                    Spent
+                  </Text>
                   <Text style={styles.amount}>
                     {money(spent)}
                   </Text>
                 </View>
 
                 <View>
-                  <Text style={styles.summaryLabel}>Remaining</Text>
+                  <Text style={styles.summaryLabel}>
+                    Remaining
+                  </Text>
                   <Text
                     style={[
                       styles.amount,
@@ -210,17 +343,16 @@ export default function App() {
                     {
                       width: `${progress}%`,
                       backgroundColor:
-                        remaining < 0 ? '#dc2626' : '#16a34a',
+                        remaining < 0
+                          ? '#dc2626'
+                          : '#16a34a',
                     },
                   ]}
                 />
               </View>
 
               <Text style={styles.progressText}>
-                {budgetAmount > 0
-                  ? Math.round((spent / budgetAmount) * 100)
-                  : 0}
-                % of budget spent
+                {percentage}% of budget spent
               </Text>
 
               {remaining < 0 && (
@@ -243,6 +375,7 @@ export default function App() {
               placeholder="Item name e.g. Milk"
               value={itemName}
               onChangeText={setItemName}
+              editable={!finishingTrip}
             />
 
             <View style={styles.inputRow}>
@@ -252,6 +385,7 @@ export default function App() {
                 keyboardType="decimal-pad"
                 value={itemPrice}
                 onChangeText={setItemPrice}
+                editable={!finishingTrip}
               />
 
               <TextInput
@@ -260,12 +394,17 @@ export default function App() {
                 keyboardType="number-pad"
                 value={itemQuantity}
                 onChangeText={setItemQuantity}
+                editable={!finishingTrip}
               />
             </View>
 
             <TouchableOpacity
-              style={styles.addButton}
+              style={[
+                styles.addButton,
+                finishingTrip && styles.disabledButton,
+              ]}
               onPress={addItem}
+              disabled={finishingTrip || !isLoaded}
             >
               <Text style={styles.addButtonText}>
                 + Add Item
@@ -277,10 +416,29 @@ export default function App() {
             </Text>
 
             <Text style={styles.itemCounter}>
-              {items.filter(item => item.purchased).length}
-              {' / '}
-              {items.length} items purchased
+              {purchasedCount} / {items.length}
+              {' '}items purchased
             </Text>
+
+            <TouchableOpacity
+              style={[
+                styles.finishButton,
+                (finishingTrip || purchasedCount === 0) &&
+                  styles.disabledButton,
+              ]}
+              onPress={finishTrip}
+              disabled={
+                finishingTrip ||
+                !isLoaded ||
+                purchasedCount === 0
+              }
+            >
+              <Text style={styles.finishButtonText}>
+                {finishingTrip
+                  ? 'Saving Trip...'
+                  : '✓ Finish Shopping Trip'}
+              </Text>
+            </TouchableOpacity>
           </View>
         }
         renderItem={({ item }) => (
@@ -288,6 +446,7 @@ export default function App() {
             <TouchableOpacity
               style={styles.itemDetails}
               onPress={() => togglePurchased(item.id)}
+              disabled={finishingTrip}
             >
               <Text style={styles.checkbox}>
                 {item.purchased ? '☑' : '☐'}
@@ -305,15 +464,17 @@ export default function App() {
 
             <View style={styles.priceColumn}>
               <Text style={styles.itemPrice}>
-                {money(item.price * item.quantity)}
+                {money(item.price * (item.quantity ?? 1))}
               </Text>
+
               <Text style={styles.quantityText}>
-                {item.quantity} × {money(item.price)}
+                {item.quantity ?? 1} × {money(item.price)}
               </Text>
             </View>
 
             <TouchableOpacity
               onPress={() => deleteItem(item.id)}
+              disabled={finishingTrip}
               accessibilityLabel={`Delete ${item.name}`}
             >
               <Text style={styles.deleteText}>✕</Text>
@@ -360,6 +521,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   label: {
+    fontSize: 15,
     fontWeight: '600',
     marginBottom: 8,
     color: '#344054',
@@ -444,6 +606,21 @@ const styles = StyleSheet.create({
   itemCounter: {
     color: '#667085',
     marginBottom: 12,
+  },
+  finishButton: {
+    backgroundColor: '#153c2e',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  finishButtonText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
+  disabledButton: {
+    opacity: 0.5,
   },
   itemRow: {
     backgroundColor: '#ffffff',

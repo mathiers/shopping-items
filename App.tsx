@@ -11,6 +11,7 @@ import {
 
 import ShoppingScreen from './src/screens/ShoppingScreen';
 import BudgetScreen from './src/screens/BudgetScreen';
+import HistoryScreen from './src/screens/HistoryScreen';
 
 type RootTabParamList = {
   Shop: undefined;
@@ -32,9 +33,7 @@ function PlaceholderScreen({ title }: { title: string }) {
   );
 }
 
-function HistoryScreen() {
-  return <PlaceholderScreen title="Shopping History" />;
-}
+
 
 
 
