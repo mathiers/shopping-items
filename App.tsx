@@ -10,6 +10,7 @@ import {
 } from 'react-native-safe-area-context';
 
 import ShoppingScreen from './src/screens/ShoppingScreen';
+import BudgetScreen from './src/screens/BudgetScreen';
 
 type RootTabParamList = {
   Shop: undefined;
@@ -35,9 +36,7 @@ function HistoryScreen() {
   return <PlaceholderScreen title="Shopping History" />;
 }
 
-function BudgetScreen() {
-  return <PlaceholderScreen title="Budget Overview" />;
-}
+
 
 function SettingsScreen() {
   return <PlaceholderScreen title="Settings" />;
