@@ -46,18 +46,19 @@ export default function App() {
         initialRouteName="Shop"
         screenOptions={({ route }) => ({
           headerShown: false,
-          tabBarActiveTintColor: '#16834a',
-          tabBarInactiveTintColor: '#667085',
+          tabBarActiveTintColor: '#15803d',
+          tabBarInactiveTintColor: '#475569',
           tabBarStyle: {
             backgroundColor: '#ffffff',
             borderTopColor: '#e5e7eb',
-            height: 65,
-            paddingTop: 6,
-            paddingBottom: 6,
+            borderTopWidth: 1,
+            height: 80,
+            paddingTop: 8,
+            paddingBottom: 12,
+            elevation: 8,
           },
-          tabBarLabelStyle: {
-            fontSize: 11,
-            fontWeight: '600',
+          tabBarItemStyle: {
+            paddingVertical: 3,
           },
           tabBarIcon: ({ focused, color, size }) => {
             let iconName: React.ComponentProps<
@@ -118,5 +119,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#667085',
     textAlign: 'center',
+  },
+  tabBarLabelStyle: {
+  fontSize: 12,
+  fontWeight: '700',
   },
 });
