@@ -20,6 +20,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 
 import { useFocusEffect } from '@react-navigation/native';
@@ -28,12 +29,28 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { saveShoppingTrip } from '../utils/shoppingHistory';
 
+const CATEGORIES = [
+  'Dairy',
+  'Meat',
+  'Vegetables',
+  'Fruit',
+  'Bakery',
+  'Frozen',
+  'Drinks',
+  'Household',
+  'Other',
+] as const;
+
+type Category = (typeof CATEGORIES)[number];
+type CategoryFilter = 'All' | Category;
+
 type ShoppingItem = {
   id: string;
   name: string;
   price: number;
   quantity: number;
   purchased: boolean;
+  category?: Category;
 };
 
 const STORAGE_KEY = '@shopping_items_v2';
@@ -41,6 +58,17 @@ const OLD_STORAGE_KEY = '@shopping_items';
 const BUDGET_KEY = '@shopping_budget';
 
 const money = (value: number) => `£${value.toFixed(2)}`;
+
+function normalizeCategory(value: unknown): Category {
+  if (
+    typeof value === 'string' &&
+    CATEGORIES.some(category => category === value)
+  ) {
+    return value as Category;
+  }
+
+  return 'Other';
+}
 
 function parseShoppingItems(
   savedData: string | null
@@ -57,58 +85,63 @@ function parseShoppingItems(
     ...item,
     quantity: item.quantity ?? 1,
     purchased: item.purchased ?? false,
+    category: normalizeCategory(item.category),
   }));
 }
 
 export default function ShoppingScreen() {
   const [budget, setBudget] = useState('100');
 
+  // ADD ITEM
   const [itemName, setItemName] = useState('');
   const [itemPrice, setItemPrice] = useState('');
   const [itemQuantity, setItemQuantity] = useState('1');
+  const [itemCategory, setItemCategory] =
+    useState<Category>('Other');
 
+  // SHOPPING LIST
   const [items, setItems] = useState<ShoppingItem[]>([]);
-
   const [isLoaded, setIsLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [finishingTrip, setFinishingTrip] = useState(false);
 
+  // EXPANDABLE SECTIONS
   const [budgetExpanded, setBudgetExpanded] =
     useState(false);
 
   const [addExpanded, setAddExpanded] =
     useState(false);
 
+  // EDIT ITEM
   const [editingItem, setEditingItem] =
     useState<ShoppingItem | null>(null);
 
   const [editName, setEditName] = useState('');
   const [editPrice, setEditPrice] = useState('');
   const [editQuantity, setEditQuantity] = useState('');
+  const [editCategory, setEditCategory] =
+    useState<Category>('Other');
+
+  // SEARCH AND FILTER
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] =
+    useState<CategoryFilter>('All');
 
   const finishingRef = useRef(false);
-
-  // Serializes all Shop-screen item writes.
   const saveQueue = useRef<Promise<void>>(
     Promise.resolve()
   );
-
-  // Prevent refresh from writing stale items back.
   const skipNextSaveRef = useRef(false);
-
-  // Tracks whether the local list has changed.
   const localVersionRef = useRef(0);
 
-  // Read the same keys used by History's Shop Again.
+  // READ EXISTING ASYNCSTORAGE DATA
   const readStoredItems = useCallback(async () => {
     const [currentData, oldData] = await Promise.all([
       AsyncStorage.getItem(STORAGE_KEY),
       AsyncStorage.getItem(OLD_STORAGE_KEY),
     ]);
 
-    return parseShoppingItems(
-      currentData ?? oldData
-    );
+    return parseShoppingItems(currentData ?? oldData);
   }, []);
 
   // INITIAL LOAD
@@ -154,7 +187,7 @@ export default function ShoppingScreen() {
     };
   }, [readStoredItems]);
 
-  // SAVE LOCAL ITEM CHANGES
+  // SAVE SHOPPING ITEMS
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -186,15 +219,14 @@ export default function ShoppingScreen() {
   useEffect(() => {
     if (!isLoaded) return;
 
-    AsyncStorage.setItem(
-      BUDGET_KEY,
-      budget
-    ).catch(error => {
-      console.error('Save budget error:', error);
-    });
+    AsyncStorage.setItem(BUDGET_KEY, budget).catch(
+      error => {
+        console.error('Save budget error:', error);
+      }
+    );
   }, [budget, isLoaded]);
 
-  // REFRESH WHEN RETURNING FROM HISTORY
+  // REFRESH ITEMS WHEN RETURNING FROM HISTORY
   useFocusEffect(
     useCallback(() => {
       if (!isLoaded) return;
@@ -208,7 +240,6 @@ export default function ShoppingScreen() {
         try {
           setRefreshing(true);
 
-          // Complete pending Shop-screen writes.
           await saveQueue.current;
 
           if (!active || finishingRef.current) return;
@@ -217,25 +248,26 @@ export default function ShoppingScreen() {
 
           if (!active || finishingRef.current) return;
 
-          // Don't overwrite edits made during refresh.
           if (
-            localVersionRef.current !==
-            versionAtStart
+            localVersionRef.current !== versionAtStart
           ) {
             return;
           }
 
-          // Avoid a redundant state update and save.
+          // Update only when the stored list differs.
+          const currentSnapshot = JSON.stringify(
+            storedItems
+          );
+
           setItems(previous => {
             if (
               JSON.stringify(previous) ===
-              JSON.stringify(storedItems)
+              currentSnapshot
             ) {
               return previous;
             }
 
             skipNextSaveRef.current = true;
-
             return storedItems;
           });
         } catch (error) {
@@ -262,7 +294,7 @@ export default function ShoppingScreen() {
     }, [isLoaded, readStoredItems])
   );
 
-  // Update items and track local changes.
+  // UPDATE ITEMS AND TRACK LOCAL CHANGES
   const updateItems = (
     updater: (previous: ShoppingItem[]) =>
       ShoppingItem[]
@@ -270,11 +302,10 @@ export default function ShoppingScreen() {
     if (!isLoaded || finishingRef.current) return;
 
     localVersionRef.current += 1;
-
     setItems(updater);
   };
 
-  // TOTALS
+  // TOTALS ALWAYS USE ALL ITEMS, NOT FILTERED ITEMS
   const spent = items
     .filter(item => item.purchased)
     .reduce(
@@ -298,9 +329,7 @@ export default function ShoppingScreen() {
 
   const percentage =
     budgetAmount > 0
-      ? Math.round(
-          (spent / budgetAmount) * 100
-        )
+      ? Math.round((spent / budgetAmount) * 100)
       : 0;
 
   const progress = Math.min(
@@ -308,7 +337,25 @@ export default function ShoppingScreen() {
     100
   );
 
-  // VALIDATION
+  // SEARCH + CATEGORY FILTER
+  const filteredItems = items.filter(item => {
+    const matchesSearch = item.name
+      .toLowerCase()
+      .includes(searchQuery.trim().toLowerCase());
+
+    const matchesCategory =
+      selectedCategory === 'All' ||
+      normalizeCategory(item.category) ===
+        selectedCategory;
+
+    return matchesSearch && matchesCategory;
+  });
+
+  const hasActiveFilter =
+    searchQuery.trim().length > 0 ||
+    selectedCategory !== 'All';
+
+  // VALIDATE NAME, PRICE AND QUANTITY
   const validateItem = (
     name: string,
     priceText: string,
@@ -328,7 +375,7 @@ export default function ShoppingScreen() {
     ) {
       Alert.alert(
         'Invalid item',
-        'Enter an item name, a positive price and a whole-number quantity.'
+        'Enter an item name, a positive unit price and a whole-number quantity.'
       );
 
       return null;
@@ -354,6 +401,7 @@ export default function ShoppingScreen() {
     const newItem: ShoppingItem = {
       id: `${Date.now()}-${Math.random()}`,
       ...validated,
+      category: itemCategory,
       purchased: false,
     };
 
@@ -365,10 +413,15 @@ export default function ShoppingScreen() {
     setItemName('');
     setItemPrice('');
     setItemQuantity('1');
+    setItemCategory('Other');
     setAddExpanded(false);
+
+    // Show the newly added item, regardless of filters.
+    setSearchQuery('');
+    setSelectedCategory('All');
   };
 
-  // EDIT ITEM
+  // OPEN EDIT ITEM
   const openEditItem = (item: ShoppingItem) => {
     if (finishingRef.current) return;
 
@@ -376,6 +429,9 @@ export default function ShoppingScreen() {
     setEditName(item.name);
     setEditPrice(String(item.price));
     setEditQuantity(String(item.quantity));
+    setEditCategory(
+      normalizeCategory(item.category)
+    );
   };
 
   const closeEditItem = () => {
@@ -383,8 +439,10 @@ export default function ShoppingScreen() {
     setEditName('');
     setEditPrice('');
     setEditQuantity('');
+    setEditCategory('Other');
   };
 
+  // SAVE EDITED ITEM
   const saveEditedItem = () => {
     if (!editingItem || finishingRef.current) return;
 
@@ -396,12 +454,16 @@ export default function ShoppingScreen() {
 
     if (!validated) return;
 
-    const id = editingItem.id;
+    const targetId = editingItem.id;
 
     updateItems(previous =>
       previous.map(item =>
-        item.id === id
-          ? { ...item, ...validated }
+        item.id === targetId
+          ? {
+              ...item,
+              ...validated,
+              category: editCategory,
+            }
           : item
       )
     );
@@ -488,7 +550,7 @@ export default function ShoppingScreen() {
 
               Alert.alert(
                 'Trip saved!',
-                'Purchased items are now in Shopping History.'
+                'Your purchases are now in Shopping History.'
               );
             } catch (error) {
               console.error('Finish trip error:', error);
@@ -507,17 +569,48 @@ export default function ShoppingScreen() {
     );
   };
 
+  // REUSABLE CATEGORY SELECTOR
+  const renderCategorySelector = (
+    selected: Category,
+    onSelect: (category: Category) => void
+  ) => (
+    <View style={styles.categorySelector}>
+      {CATEGORIES.map(category => (
+        <TouchableOpacity
+          key={category}
+          style={[
+            styles.categoryChoice,
+            selected === category &&
+              styles.categoryChoiceActive,
+          ]}
+          onPress={() => onSelect(category)}
+        >
+          <Text
+            style={[
+              styles.categoryChoiceText,
+              selected === category &&
+                styles.categoryChoiceTextActive,
+            ]}
+          >
+            {category}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
 
       <FlatList
-        data={items}
+        data={filteredItems}
         keyExtractor={item => item.id}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.content}
         ListHeaderComponent={
           <View>
+            {/* PAGE HEADER */}
             <View style={styles.titleRow}>
               <View>
                 <Text style={styles.title}>
@@ -537,7 +630,7 @@ export default function ShoppingScreen() {
               )}
             </View>
 
-            {/* BUDGET CARD */}
+            {/* SHOPPING BUDGET */}
             <View style={styles.budgetCard}>
               <TouchableOpacity
                 style={styles.compactHeader}
@@ -637,11 +730,13 @@ export default function ShoppingScreen() {
               )}
             </View>
 
-            {/* ADD ITEM */}
+            {/* ADD ITEM BUTTON */}
             <TouchableOpacity
               style={styles.addButton}
               onPress={() =>
-                setAddExpanded(previous => !previous)
+                setAddExpanded(
+                  previous => !previous
+                )
               }
               disabled={!isLoaded || finishingTrip}
             >
@@ -658,6 +753,7 @@ export default function ShoppingScreen() {
               </Text>
             </TouchableOpacity>
 
+            {/* ADD ITEM FORM */}
             {addExpanded && (
               <View style={styles.addForm}>
                 <TextInput
@@ -694,6 +790,15 @@ export default function ShoppingScreen() {
                   />
                 </View>
 
+                <Text style={styles.label}>
+                  Category
+                </Text>
+
+                {renderCategorySelector(
+                  itemCategory,
+                  setItemCategory
+                )}
+
                 <TouchableOpacity
                   style={styles.saveItemButton}
                   onPress={addItem}
@@ -706,7 +811,75 @@ export default function ShoppingScreen() {
               </View>
             )}
 
-            {/* LIST HEADER */}
+            {/* SEARCH */}
+            <View style={styles.searchContainer}>
+              <Ionicons
+                name="search-outline"
+                size={21}
+                color="#98a2b3"
+              />
+
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search shopping items..."
+                placeholderTextColor="#98a2b3"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoCapitalize="none"
+                returnKeyType="search"
+              />
+
+              {searchQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() =>
+                    setSearchQuery('')
+                  }
+                >
+                  <Ionicons
+                    name="close-circle"
+                    size={20}
+                    color="#98a2b3"
+                  />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* CATEGORY FILTERS */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              style={styles.filterScroll}
+              contentContainerStyle={styles.filterRow}
+            >
+              {(
+                ['All', ...CATEGORIES] as CategoryFilter[]
+              ).map(category => (
+                <TouchableOpacity
+                  key={category}
+                  style={[
+                    styles.filterChip,
+                    selectedCategory === category &&
+                      styles.filterChipActive,
+                  ]}
+                  onPress={() =>
+                    setSelectedCategory(category)
+                  }
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      selectedCategory === category &&
+                        styles.filterChipTextActive,
+                    ]}
+                  >
+                    {category}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* SHOPPING LIST HEADER */}
             <View style={styles.listHeader}>
               <Text style={styles.sectionTitle}>
                 My Shopping List
@@ -717,6 +890,27 @@ export default function ShoppingScreen() {
               </Text>
             </View>
 
+            {hasActiveFilter && (
+              <View style={styles.filterInfo}>
+                <Text style={styles.filterInfoText}>
+                  Showing {filteredItems.length} of{' '}
+                  {items.length} items
+                </Text>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    setSearchQuery('');
+                    setSelectedCategory('All');
+                  }}
+                >
+                  <Text style={styles.clearFilters}>
+                    Clear filters
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* FINISH SHOPPING TRIP */}
             <TouchableOpacity
               style={[
                 styles.finishButton,
@@ -752,16 +946,22 @@ export default function ShoppingScreen() {
                 {item.purchased ? '☑' : '☐'}
               </Text>
 
-              <Text
-                style={[
-                  styles.itemName,
-                  item.purchased &&
-                    styles.purchased,
-                ]}
-                numberOfLines={2}
-              >
-                {item.name}
-              </Text>
+              <View style={styles.itemTextColumn}>
+                <Text
+                  style={[
+                    styles.itemName,
+                    item.purchased &&
+                      styles.purchased,
+                  ]}
+                  numberOfLines={2}
+                >
+                  {item.name}
+                </Text>
+
+                <Text style={styles.itemCategory}>
+                  {normalizeCategory(item.category)}
+                </Text>
+              </View>
             </TouchableOpacity>
 
             <View style={styles.priceColumn}>
@@ -776,9 +976,12 @@ export default function ShoppingScreen() {
               </Text>
             </View>
 
+            {/* EDIT */}
             <TouchableOpacity
               style={styles.actionButton}
-              onPress={() => openEditItem(item)}
+              onPress={() =>
+                openEditItem(item)
+              }
               disabled={finishingTrip}
               accessibilityLabel={`Edit ${item.name}`}
             >
@@ -789,9 +992,12 @@ export default function ShoppingScreen() {
               />
             </TouchableOpacity>
 
+            {/* DELETE */}
             <TouchableOpacity
               style={styles.actionButton}
-              onPress={() => deleteItem(item.id)}
+              onPress={() =>
+                deleteItem(item.id)
+              }
               disabled={finishingTrip}
               accessibilityLabel={`Delete ${item.name}`}
             >
@@ -804,10 +1010,23 @@ export default function ShoppingScreen() {
           </View>
         )}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>
-            Your shopping list is empty.
-            Add your first item!
-          </Text>
+          <View style={styles.emptyContainer}>
+            <Ionicons
+              name={
+                hasActiveFilter
+                  ? 'search-outline'
+                  : 'basket-outline'
+              }
+              size={36}
+              color="#98a2b3"
+            />
+
+            <Text style={styles.emptyText}>
+              {hasActiveFilter
+                ? 'No items match your search or category.'
+                : 'Your shopping list is empty. Add your first item!'}
+            </Text>
+          </View>
         }
       />
 
@@ -827,82 +1046,96 @@ export default function ShoppingScreen() {
           }
         >
           <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                Edit Shopping Item
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>
+                  Edit Shopping Item
+                </Text>
+
+                <TouchableOpacity
+                  onPress={closeEditItem}
+                >
+                  <Ionicons
+                    name="close"
+                    size={24}
+                    color="#667085"
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.modalLabel}>
+                Item name
               </Text>
 
-              <TouchableOpacity
-                onPress={closeEditItem}
-              >
-                <Ionicons
-                  name="close"
-                  size={24}
-                  color="#667085"
-                />
-              </TouchableOpacity>
-            </View>
+              <TextInput
+                style={styles.input}
+                value={editName}
+                onChangeText={setEditName}
+                placeholder="Item name"
+              />
 
-            <Text style={styles.modalLabel}>
-              Item name
-            </Text>
+              <View style={styles.inputRow}>
+                <View style={styles.halfInput}>
+                  <Text style={styles.modalLabel}>
+                    Unit price (£)
+                  </Text>
 
-            <TextInput
-              style={styles.input}
-              value={editName}
-              onChangeText={setEditName}
-              placeholder="Item name"
-            />
+                  <TextInput
+                    style={styles.input}
+                    value={editPrice}
+                    onChangeText={setEditPrice}
+                    keyboardType="decimal-pad"
+                    placeholder="Price"
+                  />
+                </View>
 
-            <View style={styles.inputRow}>
-              <View style={styles.halfInput}>
-                <Text style={styles.modalLabel}>
-                  Unit price (£)
-                </Text>
+                <View style={styles.halfInput}>
+                  <Text style={styles.modalLabel}>
+                    Quantity
+                  </Text>
 
-                <TextInput
-                  style={styles.input}
-                  value={editPrice}
-                  onChangeText={setEditPrice}
-                  keyboardType="decimal-pad"
-                  placeholder="Price"
-                />
+                  <TextInput
+                    style={styles.input}
+                    value={editQuantity}
+                    onChangeText={setEditQuantity}
+                    keyboardType="number-pad"
+                    placeholder="Quantity"
+                  />
+                </View>
               </View>
 
-              <View style={styles.halfInput}>
-                <Text style={styles.modalLabel}>
-                  Quantity
-                </Text>
+              <Text style={styles.modalLabel}>
+                Category
+              </Text>
 
-                <TextInput
-                  style={styles.input}
-                  value={editQuantity}
-                  onChangeText={setEditQuantity}
-                  keyboardType="number-pad"
-                  placeholder="Quantity"
-                />
+              {renderCategorySelector(
+                editCategory,
+                setEditCategory
+              )}
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={closeEditItem}
+                >
+                  <Text style={styles.cancelButtonText}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.confirmButton}
+                  onPress={saveEditedItem}
+                >
+                  <Text style={styles.confirmButtonText}>
+                    Save Changes
+                  </Text>
+                </TouchableOpacity>
               </View>
-            </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={closeEditItem}
-              >
-                <Text style={styles.cancelButtonText}>
-                  Cancel
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.confirmButton}
-                onPress={saveEditedItem}
-              >
-                <Text style={styles.confirmButtonText}>
-                  Save Changes
-                </Text>
-              </TouchableOpacity>
-            </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -916,26 +1149,31 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f7fa',
     paddingTop: StatusBar.currentHeight || 0,
   },
+
   content: {
     padding: 16,
     paddingBottom: 60,
   },
+
   titleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+
   title: {
     fontSize: 26,
     fontWeight: 'bold',
     color: '#153c2e',
     marginBottom: 4,
   },
+
   subtitle: {
     fontSize: 13,
     color: '#667085',
     marginBottom: 16,
   },
+
   budgetCard: {
     backgroundColor: '#ffffff',
     padding: 15,
@@ -943,55 +1181,66 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     elevation: 2,
   },
+
   compactHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+
   compactTitle: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#153c2e',
   },
+
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginVertical: 10,
   },
+
   summaryLabel: {
     fontSize: 12,
     color: '#667085',
     marginBottom: 3,
   },
+
   amount: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#16834a',
   },
+
   overBudget: {
     color: '#dc2626',
   },
+
   progressBackground: {
     height: 8,
     backgroundColor: '#e5e7eb',
     borderRadius: 10,
     overflow: 'hidden',
   },
+
   progressFill: {
     height: '100%',
     borderRadius: 10,
   },
+
   expandedContent: {
     marginTop: 15,
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
     paddingTop: 15,
   },
+
   label: {
     fontWeight: '600',
     marginBottom: 8,
     color: '#344054',
   },
+
   input: {
     backgroundColor: '#ffffff',
     borderWidth: 1,
@@ -1002,21 +1251,25 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     color: '#101828',
   },
+
   plannedText: {
     marginTop: 4,
     fontWeight: '600',
     color: '#344054',
   },
+
   progressText: {
     marginTop: 8,
     fontSize: 12,
     color: '#667085',
   },
+
   warning: {
     color: '#dc2626',
     marginTop: 12,
     fontWeight: '600',
   },
+
   addButton: {
     backgroundColor: '#16834a',
     padding: 14,
@@ -1027,11 +1280,13 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 12,
   },
+
   addButtonText: {
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 15,
   },
+
   addForm: {
     backgroundColor: '#ffffff',
     borderRadius: 12,
@@ -1039,24 +1294,117 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     elevation: 2,
   },
+
   inputRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+
   halfInput: {
     width: '48%',
   },
+
   saveItemButton: {
     backgroundColor: '#153c2e',
     padding: 15,
     borderRadius: 10,
     alignItems: 'center',
   },
+
   saveItemText: {
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 15,
   },
+
+  // CATEGORY SELECTION
+  categorySelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+
+  categoryChoice: {
+    borderWidth: 1,
+    borderColor: '#d0d5dd',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#ffffff',
+  },
+
+  categoryChoiceActive: {
+    backgroundColor: '#15803d',
+    borderColor: '#15803d',
+  },
+
+  categoryChoiceText: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  categoryChoiceTextActive: {
+    color: '#ffffff',
+  },
+
+  // SEARCH
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#d0d5dd',
+    borderRadius: 12,
+    paddingHorizontal: 13,
+    marginTop: 5,
+    marginBottom: 12,
+  },
+
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#101828',
+    paddingVertical: 12,
+    marginLeft: 8,
+  },
+
+  // FILTER CHIPS
+  filterScroll: {
+    marginBottom: 16,
+  },
+
+  filterRow: {
+    gap: 8,
+    paddingRight: 12,
+  },
+
+  filterChip: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#d0d5dd',
+    borderRadius: 20,
+    paddingVertical: 9,
+    paddingHorizontal: 15,
+  },
+
+  filterChipActive: {
+    backgroundColor: '#15803d',
+    borderColor: '#15803d',
+  },
+
+  filterChipText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  filterChipTextActive: {
+    color: '#ffffff',
+  },
+
+  // LIST
   listHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1064,15 +1412,35 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 12,
   },
+
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#153c2e',
   },
+
   itemCounter: {
     fontSize: 12,
     color: '#667085',
   },
+
+  filterInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+
+  filterInfoText: {
+    color: '#667085',
+    fontSize: 12,
+  },
+
+  clearFilters: {
+    color: '#15803d',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+
   finishButton: {
     backgroundColor: '#153c2e',
     padding: 14,
@@ -1080,14 +1448,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 18,
   },
+
   finishButtonText: {
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 14,
   },
+
   disabledButton: {
     opacity: 0.5,
   },
+
   itemRow: {
     backgroundColor: '#ffffff',
     flexDirection: 'row',
@@ -1097,82 +1468,116 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     elevation: 1,
   },
+
   itemDetails: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     minWidth: 0,
   },
+
   checkbox: {
     fontSize: 24,
     marginRight: 8,
     color: '#16834a',
   },
+
+  itemTextColumn: {
+    flex: 1,
+    minWidth: 0,
+  },
+
   itemName: {
     fontSize: 15,
-    flexShrink: 1,
     color: '#101828',
   },
+
+  itemCategory: {
+    fontSize: 11,
+    color: '#15803d',
+    marginTop: 4,
+  },
+
   purchased: {
     textDecorationLine: 'line-through',
     color: '#98a2b3',
   },
+
   priceColumn: {
     alignItems: 'flex-end',
     marginHorizontal: 5,
   },
+
   itemPrice: {
     fontWeight: 'bold',
     color: '#344054',
     fontSize: 13,
   },
+
   quantityText: {
     fontSize: 10,
     color: '#667085',
     marginTop: 3,
   },
+
   actionButton: {
     padding: 8,
   },
+
+  emptyContainer: {
+    alignItems: 'center',
+    marginTop: 25,
+    gap: 10,
+  },
+
   emptyText: {
     textAlign: 'center',
     color: '#98a2b3',
-    marginTop: 25,
+    fontSize: 13,
   },
+
+  // EDIT MODAL
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
     justifyContent: 'center',
     padding: 20,
   },
+
   modalCard: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
     padding: 20,
     elevation: 8,
+    maxHeight: '85%',
   },
+
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
   },
+
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#153c2e',
   },
+
   modalLabel: {
     fontSize: 13,
     fontWeight: '600',
     color: '#344054',
     marginBottom: 8,
   },
+
   modalActions: {
     flexDirection: 'row',
     gap: 10,
     marginTop: 12,
   },
+
   cancelButton: {
     flex: 1,
     padding: 14,
@@ -1181,10 +1586,12 @@ const styles = StyleSheet.create({
     borderColor: '#d0d5dd',
     alignItems: 'center',
   },
+
   cancelButtonText: {
     color: '#475569',
     fontWeight: 'bold',
   },
+
   confirmButton: {
     flex: 1,
     backgroundColor: '#15803d',
@@ -1192,6 +1599,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
   },
+
   confirmButtonText: {
     color: '#ffffff',
     fontWeight: 'bold',
