@@ -32,11 +32,16 @@ export default function ShoppingScreen() {
   const [itemName, setItemName] = useState('');
   const [itemPrice, setItemPrice] = useState('');
   const [itemQuantity, setItemQuantity] = useState('1');
+
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [finishingTrip, setFinishingTrip] = useState(false);
 
-  // Prevent automatic saves from racing with Finish Trip.
+  // Expandable sections
+  const [budgetExpanded, setBudgetExpanded] = useState(false);
+  const [addExpanded, setAddExpanded] = useState(false);
+
+  // Coordinate automatic saves with trip completion
   const finishingRef = useRef(false);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
@@ -88,8 +93,7 @@ export default function ShoppingScreen() {
     };
   }, []);
 
-  // Serialize list writes so an older save cannot overwrite
-  // the completed trip's cleared shopping list.
+  // Save shopping items sequentially
   useEffect(() => {
     if (!isLoaded || finishingRef.current) return;
 
@@ -106,6 +110,7 @@ export default function ShoppingScreen() {
       });
   }, [items, isLoaded]);
 
+  // Persist budget changes
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -141,13 +146,10 @@ export default function ShoppingScreen() {
       ? Math.round((spent / budgetAmount) * 100)
       : 0;
 
-  const progress = Math.min(
-    Math.max(percentage, 0),
-    100
-  );
+  const progress = Math.min(Math.max(percentage, 0), 100);
 
   const addItem = () => {
-    if (finishingRef.current) return;
+    if (!isLoaded || finishingRef.current) return;
 
     const price = Number(itemPrice);
     const quantity = Number(itemQuantity);
@@ -176,9 +178,13 @@ export default function ShoppingScreen() {
     };
 
     setItems(previous => [...previous, newItem]);
+
     setItemName('');
     setItemPrice('');
     setItemQuantity('1');
+
+    // Collapse the form after successfully adding an item
+    setAddExpanded(false);
   };
 
   const togglePurchased = (id: string) => {
@@ -202,7 +208,7 @@ export default function ShoppingScreen() {
   };
 
   const finishTrip = () => {
-    if (finishingRef.current) return;
+    if (!isLoaded || finishingRef.current) return;
 
     const purchasedItems = items.filter(
       item => item.purchased
@@ -237,10 +243,10 @@ export default function ShoppingScreen() {
             );
 
             try {
-              // Wait for any previously queued list saves.
+              // Complete any pending shopping-list saves
               await saveQueue.current;
 
-              // Save the receipt before clearing purchases.
+              // Archive purchased items
               await saveShoppingTrip(
                 purchasedItems.map(item => ({
                   id: item.id,
@@ -250,7 +256,7 @@ export default function ShoppingScreen() {
                 }))
               );
 
-              // Clear purchased items from persistent storage.
+              // Persist the remaining active shopping list
               await AsyncStorage.setItem(
                 STORAGE_KEY,
                 JSON.stringify(remainingItems)
@@ -266,7 +272,7 @@ export default function ShoppingScreen() {
               console.error('Finish trip error:', error);
               Alert.alert(
                 'Save failed',
-                'The trip could not be completed. Check your History before trying again.'
+                'Check History before trying again to avoid duplicate trips.'
               );
             } finally {
               finishingRef.current = false;
@@ -297,19 +303,23 @@ export default function ShoppingScreen() {
               Shop smarter. Stay on budget.
             </Text>
 
+            {/* COMPACT EXPANDABLE BUDGET */}
             <View style={styles.budgetCard}>
-              <Text style={styles.label}>
-                Shopping Budget (£)
-              </Text>
+              <TouchableOpacity
+                style={styles.compactHeader}
+                onPress={() =>
+                  setBudgetExpanded(previous => !previous)
+                }
+                activeOpacity={0.8}
+              >
+                <Text style={styles.compactTitle}>
+                  Shopping Budget
+                </Text>
 
-              <TextInput
-                style={styles.input}
-                value={budget}
-                onChangeText={setBudget}
-                keyboardType="decimal-pad"
-                placeholder="Enter budget"
-                editable={!finishingTrip}
-              />
+                <Text style={styles.expandIcon}>
+                  {budgetExpanded ? '▲' : '▼'}
+                </Text>
+              </TouchableOpacity>
 
               <View style={styles.summaryRow}>
                 <View>
@@ -351,75 +361,107 @@ export default function ShoppingScreen() {
                 />
               </View>
 
-              <Text style={styles.progressText}>
-                {percentage}% of budget spent
-              </Text>
+              {budgetExpanded && (
+                <View style={styles.expandedContent}>
+                  <Text style={styles.label}>
+                    Shopping Budget (£)
+                  </Text>
+
+                  <TextInput
+                    style={styles.input}
+                    value={budget}
+                    onChangeText={setBudget}
+                    keyboardType="decimal-pad"
+                    placeholder="Enter budget"
+                    editable={!finishingTrip}
+                  />
+
+                  <Text style={styles.plannedText}>
+                    Planned shopping total: {money(planned)}
+                  </Text>
+
+                  <Text style={styles.progressText}>
+                    {percentage}% of budget spent
+                  </Text>
+                </View>
+              )}
 
               {remaining < 0 && (
                 <Text style={styles.warning}>
                   ⚠️ You have exceeded your budget!
                 </Text>
               )}
-
-              <Text style={styles.plannedText}>
-                Planned shopping total: {money(planned)}
-              </Text>
             </View>
 
-            <Text style={styles.sectionTitle}>
-              Add Shopping Item
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Item name e.g. Milk"
-              value={itemName}
-              onChangeText={setItemName}
-              editable={!finishingTrip}
-            />
-
-            <View style={styles.inputRow}>
-              <TextInput
-                style={[styles.input, styles.halfInput]}
-                placeholder="Unit price"
-                keyboardType="decimal-pad"
-                value={itemPrice}
-                onChangeText={setItemPrice}
-                editable={!finishingTrip}
-              />
-
-              <TextInput
-                style={[styles.input, styles.halfInput]}
-                placeholder="Quantity"
-                keyboardType="number-pad"
-                value={itemQuantity}
-                onChangeText={setItemQuantity}
-                editable={!finishingTrip}
-              />
-            </View>
-
+            {/* EXPANDABLE ADD ITEM FORM */}
             <TouchableOpacity
-              style={[
-                styles.addButton,
-                finishingTrip && styles.disabledButton,
-              ]}
-              onPress={addItem}
+              style={styles.addButton}
+              onPress={() =>
+                setAddExpanded(previous => !previous)
+              }
               disabled={finishingTrip || !isLoaded}
             >
               <Text style={styles.addButtonText}>
-                + Add Item
+                {addExpanded
+                  ? '− Close Item Form'
+                  : '+ Add Shopping Item'}
               </Text>
             </TouchableOpacity>
 
-            <Text style={styles.sectionTitle}>
-              My Shopping List
-            </Text>
+            {addExpanded && (
+              <View style={styles.addForm}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Item name e.g. Milk"
+                  value={itemName}
+                  onChangeText={setItemName}
+                  editable={!finishingTrip}
+                />
 
-            <Text style={styles.itemCounter}>
-              {purchasedCount} / {items.length}
-              {' '}items purchased
-            </Text>
+                <View style={styles.inputRow}>
+                  <TextInput
+                    style={[styles.input, styles.halfInput]}
+                    placeholder="Unit price"
+                    keyboardType="decimal-pad"
+                    value={itemPrice}
+                    onChangeText={setItemPrice}
+                    editable={!finishingTrip}
+                  />
 
+                  <TextInput
+                    style={[styles.input, styles.halfInput]}
+                    placeholder="Quantity"
+                    keyboardType="number-pad"
+                    value={itemQuantity}
+                    onChangeText={setItemQuantity}
+                    editable={!finishingTrip}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.saveItemButton}
+                  onPress={addItem}
+                  disabled={finishingTrip || !isLoaded}
+                >
+                  <Text style={styles.addButtonText}>
+                    ✓ Save Item
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* SHOPPING LIST HEADER */}
+            <View style={styles.listHeader}>
+              <Text style={styles.sectionTitle}>
+                My Shopping List
+              </Text>
+
+              <Text style={styles.itemCounter}>
+                {purchasedCount} / {items.length} purchased
+              </Text>
+            </View>
+
+            {/* FINISH TRIP */}
             <TouchableOpacity
               style={[
                 styles.finishButton,
@@ -498,34 +540,97 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f7fa',
     paddingTop: StatusBar.currentHeight || 0,
   },
+
   content: {
-    padding: 20,
+    padding: 16,
     paddingBottom: 60,
   },
+
   title: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 'bold',
     color: '#153c2e',
-    marginBottom: 6,
+    marginBottom: 4,
   },
+
   subtitle: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#667085',
-    marginBottom: 24,
+    marginBottom: 16,
   },
+
   budgetCard: {
     backgroundColor: '#ffffff',
-    padding: 20,
-    borderRadius: 16,
-    marginBottom: 24,
-    elevation: 3,
+    padding: 15,
+    borderRadius: 14,
+    marginBottom: 16,
+    elevation: 2,
   },
+
+  compactHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+
+  compactTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#153c2e',
+  },
+
+  expandIcon: {
+    fontSize: 13,
+    color: '#667085',
+  },
+
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginVertical: 10,
+  },
+
+  summaryLabel: {
+    fontSize: 12,
+    color: '#667085',
+    marginBottom: 3,
+  },
+
+  amount: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#16834a',
+  },
+
+  overBudget: {
+    color: '#dc2626',
+  },
+
+  progressBackground: {
+    height: 8,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+
+  progressFill: {
+    height: '100%',
+    borderRadius: 10,
+  },
+
+  expandedContent: {
+    marginTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingTop: 15,
+  },
+
   label: {
-    fontSize: 15,
     fontWeight: '600',
     marginBottom: 8,
     color: '#344054',
   },
+
   input: {
     backgroundColor: '#ffffff',
     borderWidth: 1,
@@ -536,138 +641,155 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     color: '#101828',
   },
-  inputRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+
+  plannedText: {
+    marginTop: 4,
+    fontWeight: '600',
+    color: '#344054',
   },
-  halfInput: {
-    width: '48%',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: 15,
-  },
-  summaryLabel: {
-    color: '#667085',
-    marginBottom: 4,
-  },
-  amount: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#16834a',
-  },
-  overBudget: {
-    color: '#dc2626',
-  },
-  progressBackground: {
-    height: 12,
-    backgroundColor: '#e5e7eb',
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 10,
-  },
+
   progressText: {
     marginTop: 8,
     fontSize: 12,
     color: '#667085',
   },
+
   warning: {
     color: '#dc2626',
     marginTop: 12,
     fontWeight: '600',
   },
-  plannedText: {
-    marginTop: 15,
-    fontWeight: '600',
-    color: '#344054',
-  },
-  sectionTitle: {
-    fontSize: 19,
-    fontWeight: 'bold',
-    marginBottom: 14,
-    color: '#153c2e',
-  },
+
   addButton: {
     backgroundColor: '#16834a',
-    padding: 16,
+    padding: 14,
     borderRadius: 10,
     alignItems: 'center',
-    marginBottom: 26,
-  },
-  addButtonText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  itemCounter: {
-    color: '#667085',
     marginBottom: 12,
   },
-  finishButton: {
-    backgroundColor: '#153c2e',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 18,
-  },
-  finishButtonText: {
+
+  addButtonText: {
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 15,
   },
+
+  addForm: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 18,
+    elevation: 2,
+  },
+
+  inputRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+
+  halfInput: {
+    width: '48%',
+  },
+
+  saveItemButton: {
+    backgroundColor: '#153c2e',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+
+  listHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
+    marginBottom: 12,
+  },
+
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#153c2e',
+  },
+
+  itemCounter: {
+    fontSize: 12,
+    color: '#667085',
+  },
+
+  finishButton: {
+    backgroundColor: '#153c2e',
+    padding: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+
+  finishButtonText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+
   disabledButton: {
     opacity: 0.5,
   },
+
   itemRow: {
     backgroundColor: '#ffffff',
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 15,
+    padding: 14,
     borderRadius: 10,
     marginBottom: 10,
     elevation: 1,
   },
+
   itemDetails: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
   },
+
   checkbox: {
     fontSize: 24,
     marginRight: 10,
     color: '#16834a',
   },
+
   itemName: {
     fontSize: 16,
     flexShrink: 1,
     color: '#101828',
   },
+
   purchased: {
     textDecorationLine: 'line-through',
     color: '#98a2b3',
   },
+
   priceColumn: {
     alignItems: 'flex-end',
     marginHorizontal: 10,
   },
+
   itemPrice: {
     fontWeight: 'bold',
     color: '#344054',
   },
+
   quantityText: {
     fontSize: 11,
     color: '#667085',
     marginTop: 3,
   },
+
   deleteText: {
     color: '#dc2626',
     fontSize: 20,
     paddingHorizontal: 4,
   },
+
   emptyText: {
     textAlign: 'center',
     color: '#98a2b3',
