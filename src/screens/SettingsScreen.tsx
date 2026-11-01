@@ -1,78 +1,96 @@
 
 import React, { useCallback, useState } from 'react';
-
 import {
   View,
   Text,
-  TextInput,
-  TouchableOpacity,
   ScrollView,
   StyleSheet,
+  TouchableOpacity,
+  Switch,
+  Linking,
   Alert,
-  ActivityIndicator,
+  StatusBar,
 } from 'react-native';
-
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-import {
-  Category,
-  DEFAULT_CATEGORIES,
-  ICON_OPTIONS,
-  PALETTE,
-  getCategories,
-  saveCategories,
-  reassignItemCategory,
-} from '../utils/shoppingCategories';
+import { useAppTheme } from '../theme/ThemeContext';
 
-type IconName = React.ComponentProps<typeof Ionicons>['name'];
+export type SettingsStackParams = {
+  SettingsMain: undefined;
+  Categories: undefined;
+};
 
-const iconName = (value: string): IconName =>
-  value as IconName;
+type Navigation = NativeStackNavigationProp<
+  SettingsStackParams,
+  'SettingsMain'
+>;
+
+const THEME_KEY = '@shopping_theme';
+const CURRENCY_KEY = '@shopping_currency';
+const LANGUAGE_KEY = '@shopping_language';
+
+const CURRENCIES = [
+  { code: 'GBP', label: '🇬🇧 British Pound (£)' },
+  { code: 'USD', label: '🇺🇸 US Dollar ($)' },
+  { code: 'EUR', label: '🇩🇪 Euro (€)' },
+  { code: 'JPY', label: '🇯🇵 Japanese Yen (¥)' },
+  { code: 'CNY', label: '🇨🇳 Chinese Yuan (¥)' },
+  { code: 'INR', label: '🇮🇳 Indian Rupee (₹)' },
+  { code: 'CAD', label: '🇨🇦 Canadian Dollar ($)' },
+  { code: 'AUD', label: '🇦🇺 Australian Dollar ($)' },
+  { code: 'ZAR', label: '🇿🇦 South African Rand (R)' },
+  { code: 'ZWG', label: '🇿🇼 Zimbabwe Gold (ZiG)' },
+];
+
+const LANGUAGES = [
+  { code: 'en', label: '🇬🇧 English' },
+  { code: 'fr', label: '🇫🇷 Français' },
+  { code: 'es', label: '🇪🇸 Español' },
+  { code: 'pt', label: '🇵🇹 Português' },
+  { code: 'de', label: '🇩🇪 Deutsch' },
+  { code: 'zh', label: '🇨🇳 中文' },
+  { code: 'ar', label: '🇸🇦 العربية' },
+  { code: 'hi', label: '🇮🇳 हिन्दी' },
+  { code: 'ja', label: '🇯🇵 日本語' },
+  { code: 'sw', label: '🇰🇪 Kiswahili' },
+  { code: 'sn', label: '🇿🇼 Shona' },
+  { code: 'nd', label: '🇿🇼 isiNdebele' },
+];
 
 export default function SettingsScreen() {
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-
-  const [editingId, setEditingId] = useState<string | null>(
-    null
-  );
-
-  const [name, setName] = useState('');
-  const [icon, setIcon] = useState<string>('basket-outline');
-  const [background, setBackground] = useState<string>(
-    PALETTE[0].background
-  );
-
-  const [accent, setAccent] = useState<string>(
-    PALETTE[0].accent
-  );
+  const navigation = useNavigation<Navigation>();
+  const { darkMode, setDarkMode } = useAppTheme();
+  const dark = darkMode;
+  const [currency, setCurrency] = useState('GBP');
+  const [language, setLanguage] = useState('en');
+  const [expanded, setExpanded] = useState<
+    'currency' | 'language' | null
+  >(null);
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
 
-      const load = async () => {
+      async function load() {
         try {
-          const saved = await getCategories();
+          const values = await AsyncStorage.multiGet([
+            CURRENCY_KEY,
+            LANGUAGE_KEY,
+          ]);
 
-          if (active) {
-            setCategories(saved);
-          }
+          if (!active) return;
+
+          const stored = Object.fromEntries(values);
+
+          setCurrency(stored[CURRENCY_KEY] || 'GBP');
+          setLanguage(stored[LANGUAGE_KEY] || 'en');
         } catch (error) {
-          console.error(error);
-
-          if (active) {
-            Alert.alert(
-              'Loading failed',
-              'Could not load categories.'
-            );
-          }
-        } finally {
-          if (active) setLoading(false);
+          console.error('Settings load error:', error);
         }
-      };
+      }
 
       load();
 
@@ -82,514 +100,250 @@ export default function SettingsScreen() {
     }, [])
   );
 
-  const resetForm = () => {
-    setEditingId(null);
-    setName('');
-    setIcon('basket-outline');
-    setBackground(PALETTE[0].background);
-    setAccent(PALETTE[0].accent);
+
+
+  const updateCurrency = async (code: string) => {
+    try {
+      await AsyncStorage.setItem(CURRENCY_KEY, code);
+      setCurrency(code);
+      setExpanded(null);
+    } catch {
+      Alert.alert('Error', 'Could not save currency.');
+    }
   };
 
-  const persist = async (next: Category[]) => {
-    await saveCategories(next);
-    setCategories(next);
+  const updateLanguage = async (code: string) => {
+    try {
+      await AsyncStorage.setItem(LANGUAGE_KEY, code);
+      setLanguage(code);
+      setExpanded(null);
+    } catch {
+      Alert.alert('Error', 'Could not save language.');
+    }
   };
 
-  const submit = async () => {
-    const cleanName = name.trim();
-
-    if (!cleanName || busy) {
-      if (!cleanName) {
-        Alert.alert('Name required', 'Enter a category name.');
-      }
-      return;
-    }
-
-    if (
-      categories.some(
-        category =>
-          category.name.toLowerCase() ===
-            cleanName.toLowerCase() &&
-          category.id !== editingId
-      )
-    ) {
-      Alert.alert(
-        'Duplicate category',
-        'A category with that name already exists.'
-      );
-      return;
-    }
-
-    const original = categories.find(
-      category => category.id === editingId
-    );
-
-    if (original?.id === 'other' && cleanName !== 'Other') {
-      Alert.alert(
-        'Protected category',
-        'Other must keep its name.'
-      );
-      return;
-    }
-
-    setBusy(true);
+  const contactDeveloper = async () => {
+    const url =
+      'mailto:mrmoyomathias@gmail.com?subject=Shopping%20Items%20App';
 
     try {
-      if (original) {
-        const updated = categories.map(category =>
-          category.id === editingId
-            ? {
-                ...category,
-                name: cleanName,
-                icon,
-                background,
-                accent,
-              }
-            : category
-        );
-
-        if (original.name !== cleanName) {
-          await reassignItemCategory(
-            original.name,
-            cleanName
-          );
-        }
-
-        await persist(updated);
-      } else {
-        const newCategory: Category = {
-          id: `custom-${Date.now()}-${Math.random()}`,
-          name: cleanName,
-          icon,
-          background,
-          accent,
-        };
-
-        // Keep Other as the final fallback category.
-        const otherIndex = categories.findIndex(
-          category => category.id === 'other'
-        );
-
-        const updated = [...categories];
-
-        updated.splice(
-          otherIndex < 0 ? updated.length : otherIndex,
-          0,
-          newCategory
-        );
-
-        await persist(updated);
-      }
-
-      resetForm();
-    } catch (error) {
-      console.error(error);
-
+      await Linking.openURL(url);
+    } catch {
       Alert.alert(
-        'Save failed',
-        'Could not save category changes.'
+        'Email unavailable',
+        'Contact: mrmoyomathias@gmail.com'
       );
-    } finally {
-      setBusy(false);
     }
   };
 
-  const editCategory = (category: Category) => {
-    setEditingId(category.id);
-    setName(category.name);
-    setIcon(category.icon);
-    setBackground(category.background);
-    setAccent(category.accent);
-  };
+  const background = dark ? '#111827' : '#F5F7FA';
+  const surface = dark ? '#1F2937' : '#FFFFFF';
+  const primary = dark ? '#F9FAFB' : '#153C2E';
+  const secondary = dark ? '#9CA3AF' : '#667085';
+  const divider = dark ? '#374151' : '#E5E7EB';
 
-  const moveCategory = async (
-    index: number,
-    direction: number
-  ) => {
-    if (busy) return;
+  const selectedCurrency =
+    CURRENCIES.find(item => item.code === currency);
 
-    const target = index + direction;
-
-    if (target < 0 || target >= categories.length) {
-      return;
-    }
-
-    const updated = [...categories];
-
-    [updated[index], updated[target]] = [
-      updated[target],
-      updated[index],
-    ];
-
-    setBusy(true);
-
-    try {
-      await persist(updated);
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Could not reorder categories.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const deleteCategory = (category: Category) => {
-    if (busy) return;
-
-    if (category.id === 'other') {
-      Alert.alert(
-        'Protected category',
-        'Other cannot be deleted.'
-      );
-      return;
-    }
-
-    Alert.alert(
-      'Delete category?',
-      `Delete "${category.name}"? Existing shopping items in this category will be moved to Other.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setBusy(true);
-
-            try {
-              await reassignItemCategory(
-                category.name,
-                'Other'
-              );
-
-              await persist(
-                categories.filter(
-                  item => item.id !== category.id
-                )
-              );
-
-              if (editingId === category.id) {
-                resetForm();
-              }
-            } catch (error) {
-              console.error(error);
-              Alert.alert(
-                'Delete failed',
-                'Could not delete the category.'
-              );
-            } finally {
-              setBusy(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const restoreDefaults = () => {
-    Alert.alert(
-      'Restore default categories?',
-      'This adds back missing default categories. Your custom categories and their order will remain.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Restore',
-          onPress: async () => {
-            if (busy) return;
-
-            setBusy(true);
-
-            try {
-              const missing = DEFAULT_CATEGORIES.filter(
-                fallback =>
-                  !categories.some(
-                    current => current.id === fallback.id
-                  )
-              );
-
-              await persist([
-                ...categories.filter(
-                  category => category.id !== 'other'
-                ),
-                ...missing.filter(
-                  category => category.id !== 'other'
-                ),
-                categories.find(
-                  category => category.id === 'other'
-                ) || DEFAULT_CATEGORIES[8],
-              ]);
-            } catch (error) {
-              console.error(error);
-              Alert.alert(
-                'Error',
-                'Could not restore defaults.'
-              );
-            } finally {
-              setBusy(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator color="#15803d" size="large" />
-      </View>
-    );
-  }
+  const selectedLanguage =
+    LANGUAGES.find(item => item.code === language);
 
   return (
     <ScrollView
-      style={styles.container}
+      style={{ flex: 1, backgroundColor: background }}
       contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
     >
-      <Text style={styles.title}>Settings</Text>
-      <Text style={styles.subtitle}>
-        Personalize your shopping experience
+      <StatusBar
+        barStyle={dark ? 'light-content' : 'dark-content'}
+      />
+
+      <Text style={[styles.title, { color: primary }]}>
+        Settings
       </Text>
 
-      <View style={styles.card}>
-        <Text style={styles.heading}>
-          {editingId ? 'Edit Category' : 'Add Category'}
-        </Text>
+      <Text style={[styles.subtitle, { color: secondary }]}>
+        Personalise your shopping experience
+      </Text>
 
-        <Text style={styles.label}>Category name</Text>
+      <Text style={[styles.section, { color: secondary }]}>
+        APPEARANCE
+      </Text>
 
-        <TextInput
-          style={styles.input}
-          value={name}
-          onChangeText={setName}
-          placeholder="e.g. Toiletries"
-          maxLength={32}
-        />
+      <View style={[styles.card, { backgroundColor: surface }]}>
+        <View style={styles.row}>
+          <View style={[styles.iconBox, { backgroundColor: dark ? '#374151' : '#EAF7EF' }]}>
+            <Ionicons
+              name={dark ? 'moon-outline' : 'sunny-outline'}
+              size={23}
+              color="#16A34A"
+            />
+          </View>
 
-        <Text style={styles.label}>Choose an icon</Text>
+          <View style={styles.rowText}>
+            <Text style={[styles.rowTitle, { color: primary }]}>
+              Dark Mode
+            </Text>
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
+              Dark appearance for Settings
+            </Text>
+          </View>
 
-        <View style={styles.iconGrid}>
-          {ICON_OPTIONS.map(option => (
-            <TouchableOpacity
-              key={option}
-              style={[
-                styles.iconChoice,
-                icon === option && styles.iconSelected,
-              ]}
-              onPress={() => setIcon(option)}
-            >
-              <Ionicons
-                name={iconName(option)}
-                size={23}
-                color={
-                  icon === option ? '#15803d' : '#64748b'
-                }
-              />
-            </TouchableOpacity>
-          ))}
+          <Switch
+            value={darkMode}
+            onValueChange={setDarkMode}
+            trackColor={{ false: '#CBD5E1', true: '#86EFAC' }}
+            thumbColor={dark ? '#15803D' : '#FFFFFF'}
+          />
         </View>
+      </View>
 
-        <Text style={styles.label}>
-          Choose a background colour
-        </Text>
+      <Text style={[styles.section, { color: secondary }]}>
+        REGION & LANGUAGE
+      </Text>
 
-        <View style={styles.paletteRow}>
-          {PALETTE.map(option => (
+      <View style={[styles.card, { backgroundColor: surface }]}>
+        <TouchableOpacity
+          style={styles.row}
+          onPress={() =>
+            setExpanded(expanded === 'language' ? null : 'language')
+          }
+        >
+          <View style={[styles.iconBox, { backgroundColor: '#EAF1FB' }]}>
+            <Ionicons name="language-outline" size={23} color="#447CC4" />
+          </View>
+
+          <View style={styles.rowText}>
+            <Text style={[styles.rowTitle, { color: primary }]}>
+              App Language
+            </Text>
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
+              {selectedLanguage?.label || 'English'}
+            </Text>
+          </View>
+
+          <Ionicons
+            name={expanded === 'language' ? 'chevron-up' : 'chevron-down'}
+            size={20}
+            color={secondary}
+          />
+        </TouchableOpacity>
+
+        {expanded === 'language' &&
+          LANGUAGES.map(item => (
             <TouchableOpacity
-              key={option.background}
-              style={[
-                styles.colourChoice,
-                {
-                  backgroundColor: option.background,
-                  borderColor:
-                    background === option.background
-                      ? '#15803d'
-                      : '#d0d5dd',
-                  borderWidth:
-                    background === option.background ? 3 : 1,
-                },
-              ]}
-              onPress={() => {
-                setBackground(option.background);
-                setAccent(option.accent);
-              }}
+              key={item.code}
+              style={[styles.option, { borderTopColor: divider }]}
+              onPress={() => updateLanguage(item.code)}
             >
-              {background === option.background && (
-                <Ionicons
-                  name="checkmark"
-                  size={18}
-                  color="#15803d"
-                />
+              <Text style={[styles.optionText, { color: primary }]}>
+                {item.label}
+              </Text>
+              {language === item.code && (
+                <Ionicons name="checkmark-circle" size={21} color="#15803D" />
               )}
             </TouchableOpacity>
           ))}
-        </View>
 
-        <View
-          style={[
-            styles.preview,
-            { backgroundColor: background },
-          ]}
-        >
-          <Ionicons
-            name={iconName(icon)}
-            size={26}
-            color={accent}
-          />
-
-          <View>
-            <Text
-              style={[
-                styles.previewTitle,
-                { color: accent },
-              ]}
-            >
-              {name.trim() || 'My Category'}
-            </Text>
-
-            <Text style={styles.previewSubtitle}>
-              Category preview
-            </Text>
-          </View>
-        </View>
+        <View style={[styles.separator, { backgroundColor: divider }]} />
 
         <TouchableOpacity
-          style={[
-            styles.primaryButton,
-            busy && styles.disabled,
-          ]}
-          onPress={submit}
-          disabled={busy}
+          style={styles.row}
+          onPress={() =>
+            setExpanded(expanded === 'currency' ? null : 'currency')
+          }
         >
-          <Text style={styles.primaryButtonText}>
-            {editingId ? 'Save Changes' : 'Add Category'}
-          </Text>
+          <View style={[styles.iconBox, { backgroundColor: '#EAF7EF' }]}>
+            <Ionicons name="cash-outline" size={23} color="#15803D" />
+          </View>
+
+          <View style={styles.rowText}>
+            <Text style={[styles.rowTitle, { color: primary }]}>
+              Currency
+            </Text>
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
+              {selectedCurrency?.label || 'British Pound'}
+            </Text>
+          </View>
+
+          <Ionicons
+            name={expanded === 'currency' ? 'chevron-up' : 'chevron-down'}
+            size={20}
+            color={secondary}
+          />
         </TouchableOpacity>
 
-        {editingId && (
-          <TouchableOpacity
-            style={styles.cancelButton}
-            onPress={resetForm}
-          >
-            <Text style={styles.cancelText}>
-              Cancel editing
-            </Text>
-          </TouchableOpacity>
-        )}
+        {expanded === 'currency' &&
+          CURRENCIES.map(item => (
+            <TouchableOpacity
+              key={item.code}
+              style={[styles.option, { borderTopColor: divider }]}
+              onPress={() => updateCurrency(item.code)}
+            >
+              <Text style={[styles.optionText, { color: primary }]}>
+                {item.label}
+              </Text>
+              {currency === item.code && (
+                <Ionicons name="checkmark-circle" size={21} color="#15803D" />
+              )}
+            </TouchableOpacity>
+          ))}
       </View>
 
-      <View style={styles.card}>
-        <View style={styles.headingRow}>
-          <Text style={styles.heading}>
-            Category Order
-          </Text>
+      <Text style={[styles.section, { color: secondary }]}>
+        SHOPPING PREFERENCES
+      </Text>
 
-          <Text style={styles.counter}>
-            {categories.length} categories
-          </Text>
+      <View style={[styles.card, { backgroundColor: surface }]}>
+        <TouchableOpacity
+          style={styles.row}
+          onPress={() => navigation.navigate('Categories')}
+        >
+          <View style={[styles.iconBox, { backgroundColor: '#F2EAFB' }]}>
+            <Ionicons name="grid-outline" size={23} color="#9564C5" />
+          </View>
+
+          <View style={styles.rowText}>
+            <Text style={[styles.rowTitle, { color: primary }]}>
+              Categories
+            </Text>
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
+              Manage categories, icons, colours and order
+            </Text>
+          </View>
+
+          <Ionicons name="chevron-forward" size={20} color={secondary} />
+        </TouchableOpacity>
+      </View>
+
+      <Text style={[styles.section, { color: secondary }]}>
+        ABOUT
+      </Text>
+
+      <View style={[styles.card, { backgroundColor: surface }]}>
+        <View style={styles.row}>
+          <View style={[styles.iconBox, { backgroundColor: '#EAF7EF' }]}>
+            <Ionicons name="information-circle-outline" size={23} color="#15803D" />
+          </View>
+
+          <View style={styles.rowText}>
+            <Text style={[styles.rowTitle, { color: primary }]}>
+              Shopping Items
+            </Text>
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
+              Shopping list and budget manager
+            </Text>
+          </View>
         </View>
+      </View>
 
-        <Text style={styles.hint}>
-          Use the arrows to change the order shown in
-          your Shop filters and category selectors.
+      <View style={styles.footer}>
+        <Text style={[styles.footerText, { color: secondary }]}>
+          Developed by Mathias Moyo
         </Text>
 
-        {categories.map((category, index) => (
-          <View
-            key={category.id}
-            style={[
-              styles.categoryRow,
-              {
-                backgroundColor: category.background,
-              },
-            ]}
-          >
-            <Ionicons
-              name={iconName(category.icon)}
-              size={22}
-              color={category.accent}
-            />
-
-            <Text
-              style={styles.categoryName}
-              numberOfLines={1}
-            >
-              {category.name}
-            </Text>
-
-            <TouchableOpacity
-              style={styles.smallAction}
-              onPress={() => moveCategory(index, -1)}
-              disabled={busy || index === 0}
-            >
-              <Ionicons
-                name="arrow-up"
-                size={19}
-                color={index === 0 ? '#cbd5e1' : '#475569'}
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.smallAction}
-              onPress={() => moveCategory(index, 1)}
-              disabled={
-                busy || index === categories.length - 1
-              }
-            >
-              <Ionicons
-                name="arrow-down"
-                size={19}
-                color={
-                  index === categories.length - 1
-                    ? '#cbd5e1'
-                    : '#475569'
-                }
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.smallAction}
-              onPress={() => editCategory(category)}
-              disabled={busy}
-            >
-              <Ionicons
-                name="pencil-outline"
-                size={18}
-                color="#15803d"
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.smallAction}
-              onPress={() => deleteCategory(category)}
-              disabled={busy || category.id === 'other'}
-            >
-              <Ionicons
-                name="trash-outline"
-                size={18}
-                color={
-                  category.id === 'other'
-                    ? '#cbd5e1'
-                    : '#dc2626'
-                }
-              />
-            </TouchableOpacity>
-          </View>
-        ))}
-
-        <TouchableOpacity
-          style={styles.restoreButton}
-          onPress={restoreDefaults}
-          disabled={busy}
-        >
-          <Ionicons
-            name="refresh-outline"
-            size={18}
-            color="#15803d"
-          />
-
-          <Text style={styles.restoreText}>
-            Restore missing default categories
+        <TouchableOpacity onPress={contactDeveloper}>
+          <Text style={styles.email}>
+            Contact Developer · mrmoyomathias@gmail.com
           </Text>
         </TouchableOpacity>
       </View>
@@ -598,167 +352,82 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f7fa',
-  },
   content: {
     padding: 16,
-    paddingBottom: 60,
-  },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingBottom: 45,
   },
   title: {
     fontSize: 26,
     fontWeight: 'bold',
-    color: '#153c2e',
   },
   subtitle: {
-    color: '#667085',
-    marginTop: 4,
-    marginBottom: 18,
+    fontSize: 13,
+    marginTop: 5,
+    marginBottom: 22,
+  },
+  section: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+    marginBottom: 10,
+    marginTop: 9,
   },
   card: {
-    backgroundColor: '#ffffff',
     borderRadius: 16,
-    padding: 16,
-    marginBottom: 18,
+    padding: 15,
+    marginBottom: 20,
     elevation: 2,
   },
-  heading: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#153c2e',
-    marginBottom: 14,
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 53,
   },
-  headingRow: {
+  iconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowText: {
+    flex: 1,
+  },
+  rowTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  rowSubtitle: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  separator: {
+    height: 1,
+    marginVertical: 15,
+  },
+  option: {
+    paddingVertical: 13,
+    paddingHorizontal: 7,
+    borderTopWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  counter: {
-    color: '#667085',
-    fontSize: 12,
+  optionText: {
+    fontSize: 14,
   },
-  hint: {
-    color: '#667085',
-    fontSize: 12,
-    marginBottom: 16,
-    lineHeight: 18,
-  },
-  label: {
-    fontWeight: '600',
-    color: '#344054',
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d0d5dd',
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 18,
-  },
-  iconGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 9,
-    marginBottom: 20,
-  },
-  iconChoice: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+  footer: {
     alignItems: 'center',
-    justifyContent: 'center',
+    paddingVertical: 20,
+    gap: 7,
   },
-  iconSelected: {
-    borderColor: '#15803d',
-    borderWidth: 2,
-    backgroundColor: '#edf7eb',
+  footerText: {
+    fontSize: 11,
   },
-  paletteRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 18,
-  },
-  colourChoice: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  preview: {
-    borderRadius: 12,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 18,
-  },
-  previewTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  previewSubtitle: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-  primaryButton: {
-    backgroundColor: '#15803d',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-  },
-  disabled: {
-    opacity: 0.5,
-  },
-  cancelButton: {
-    alignItems: 'center',
-    marginTop: 14,
-  },
-  cancelText: {
-    color: '#64748b',
-    fontWeight: '600',
-  },
-  categoryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderRadius: 10,
-    padding: 9,
-    marginBottom: 9,
-  },
-  categoryName: {
-    flex: 1,
-    color: '#344054',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  smallAction: {
-    padding: 5,
-  },
-  restoreButton: {
-    marginTop: 10,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  restoreText: {
-    color: '#15803d',
-    fontWeight: '600',
+  email: {
+    color: '#15803D',
+    fontSize: 11,
+    textAlign: 'center',
   },
 });

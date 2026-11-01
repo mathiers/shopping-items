@@ -1,18 +1,37 @@
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+
+import {
+  NavigationContainer,
+  DarkTheme,
+  DefaultTheme,
+} from '@react-navigation/native';
+
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+
 import { Ionicons } from '@expo/vector-icons';
+
 import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
 import ShoppingScreen from './src/screens/ShoppingScreen';
-import BudgetScreen from './src/screens/BudgetScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
+import BudgetScreen from './src/screens/BudgetScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import CategoriesScreen from './src/screens/CategoriesScreen';
+
+import type { SettingsStackParams } from './src/screens/SettingsScreen';
+
+import { lightColors, darkColors } from './src/theme/colors';
+
+import {
+  ThemeProvider,
+  useAppTheme,
+} from './src/theme/ThemeContext';
 
 type RootTabParamList = {
   Shop: undefined;
@@ -23,35 +42,75 @@ type RootTabParamList = {
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
-function PlaceholderScreen({ title }: { title: string }) {
+const SettingsStack =
+  createNativeStackNavigator<SettingsStackParams>();
+
+function SettingsNavigator() {
+  const { darkMode } = useAppTheme();
+  const colors = darkMode ? darkColors : lightColors;
+
   return (
-    <View style={styles.placeholder}>
-      <Text style={styles.placeholderTitle}>{title}</Text>
-      <Text style={styles.placeholderText}>
-        Coming soon to Shopping Items
-      </Text>
-    </View>
+    <SettingsStack.Navigator>
+      <SettingsStack.Screen
+        name="SettingsMain"
+        component={SettingsScreen}
+        options={{
+          headerShown: false,
+        }}
+      />
+
+      <SettingsStack.Screen
+        name="Categories"
+        component={CategoriesScreen}
+        options={{
+          title: 'Categories',
+          headerTintColor: colors.primary,
+          headerStyle: {
+            backgroundColor: colors.card,
+          },
+          headerTitleStyle: {
+            fontWeight: 'bold',
+          },
+        }}
+      />
+    </SettingsStack.Navigator>
   );
 }
-
-
 
 function MainNavigator() {
   const insets = useSafeAreaInsets();
 
+  const { darkMode } = useAppTheme();
+
+  const colors = darkMode ? darkColors : lightColors;
+
+  const baseTheme = darkMode ? DarkTheme : DefaultTheme;
+
+  const navigationTheme = {
+    ...baseTheme,
+    colors: {
+      ...baseTheme.colors,
+      primary: colors.primary,
+      background: colors.background,
+      card: colors.card,
+      text: colors.text,
+      border: colors.border,
+    },
+  };
+
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={navigationTheme}>
       <Tab.Navigator
         initialRouteName="Shop"
         screenOptions={({ route }) => ({
           headerShown: false,
 
-          tabBarActiveTintColor: '#15803d',
-          tabBarInactiveTintColor: '#475569',
+          tabBarActiveTintColor: colors.primary,
+          tabBarInactiveTintColor: colors.secondaryText,
 
           tabBarStyle: {
-            backgroundColor: '#ffffff',
-            borderTopColor: '#e5e7eb',
+            backgroundColor: colors.card,
+            borderTopColor: colors.border,
             borderTopWidth: 1,
             height: 65 + insets.bottom,
             paddingTop: 8,
@@ -71,15 +130,21 @@ function MainNavigator() {
 
             switch (route.name) {
               case 'Shop':
-                iconName = focused ? 'cart' : 'cart-outline';
+                iconName = focused
+                  ? 'cart'
+                  : 'cart-outline';
                 break;
 
               case 'History':
-                iconName = focused ? 'time' : 'time-outline';
+                iconName = focused
+                  ? 'time'
+                  : 'time-outline';
                 break;
 
               case 'Budget':
-                iconName = focused ? 'wallet' : 'wallet-outline';
+                iconName = focused
+                  ? 'wallet'
+                  : 'wallet-outline';
                 break;
 
               case 'Settings':
@@ -106,17 +171,20 @@ function MainNavigator() {
           name="Shop"
           component={ShoppingScreen}
         />
+
         <Tab.Screen
           name="History"
           component={HistoryScreen}
         />
+
         <Tab.Screen
           name="Budget"
           component={BudgetScreen}
         />
+
         <Tab.Screen
           name="Settings"
-          component={SettingsScreen}
+          component={SettingsNavigator}
         />
       </Tab.Navigator>
     </NavigationContainer>
@@ -126,30 +194,9 @@ function MainNavigator() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <MainNavigator />
+      <ThemeProvider>
+        <MainNavigator />
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  placeholder: {
-    flex: 1,
-    backgroundColor: '#f5f7fa',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-
-  placeholderTitle: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#153c2e',
-    marginBottom: 12,
-  },
-
-  placeholderText: {
-    fontSize: 15,
-    color: '#667085',
-    textAlign: 'center',
-  },
-});

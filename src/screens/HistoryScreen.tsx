@@ -16,9 +16,10 @@ import {
 } from 'react-native';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useTheme } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrency, formatMoney } from '../utils/currency';
+import { lightColors, darkColors } from '../theme/colors';
 
 import {
   getShoppingHistory,
@@ -58,7 +59,6 @@ type CategorySpending = {
 };
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
-
 
 
 const iconName = (value: string): IconName =>
@@ -194,30 +194,21 @@ function buildCategorySpending(
 }
 
 export default function HistoryScreen() {
+  const { dark } = useTheme();
+  const colors = dark ? darkColors : lightColors;
+  const styles = React.useMemo(() => createStyles(colors, dark), [dark]);
   const [currency, setCurrency] = useState('GBP');
-
   const money = (value: number) => formatMoney(value, currency);
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
-
-      getCurrency()
-        .then(saved => {
-          if (active) {
-            setCurrency(saved);
-          }
-        })
-        .catch(error => {
-          console.error('Currency loading error:', error);
-        });
-
-      return () => {
-        active = false;
-      };
+      getCurrency().then(saved => {
+        if (active) setCurrency(saved);
+      }).catch(error => console.error('Currency loading error:', error));
+      return () => { active = false; };
     }, [])
   );
-
   const [trips, setTrips] = useState<ShoppingTrip[]>([]);
   const [categories, setCategories] = useState<Category[]>(
     DEFAULT_CATEGORIES
@@ -585,15 +576,14 @@ export default function HistoryScreen() {
                     style={[
                       styles.categoryIcon,
                       {
-                        backgroundColor:
-                          entry.category.background,
+                        backgroundColor: dark ? colors.input : entry.category.background,
                       },
                     ]}
                   >
                     <Ionicons
                       name={iconName(entry.category.icon)}
                       size={19}
-                      color={entry.category.accent}
+                      color={dark ? colors.accent : entry.category.accent}
                     />
                   </View>
 
@@ -685,15 +675,14 @@ export default function HistoryScreen() {
                     style={[
                       styles.tripItemIcon,
                       {
-                        backgroundColor:
-                          category.background,
+                        backgroundColor: dark ? colors.input : category.background,
                       },
                     ]}
                   >
                     <Ionicons
                       name={iconName(category.icon)}
                       size={17}
-                      color={category.accent}
+                      color={dark ? colors.accent : category.accent}
                     />
                   </View>
 
@@ -771,10 +760,10 @@ export default function HistoryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: typeof lightColors, dark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f7fa',
+    backgroundColor: colors.background,
   },
   content: {
     padding: 16,
@@ -784,25 +773,25 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f5f7fa',
+    backgroundColor: colors.background,
   },
   loadingText: {
     marginTop: 12,
-    color: '#667085',
+    color: colors.secondaryText,
   },
   title: {
     fontSize: 26,
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: colors.text,
   },
   subtitle: {
     fontSize: 13,
-    color: '#667085',
+    color: colors.secondaryText,
     marginTop: 4,
     marginBottom: 18,
   },
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 16,
     marginBottom: 18,
@@ -811,7 +800,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: colors.text,
     marginBottom: 12,
   },
   periodRow: {
@@ -823,28 +812,28 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     borderRadius: 10,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: colors.input,
     alignItems: 'center',
   },
   periodButtonActive: {
-    backgroundColor: '#15803d',
+    backgroundColor: colors.primary,
   },
   periodText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#475569',
+    color: colors.secondaryText,
   },
   periodTextActive: {
     color: '#ffffff',
   },
   metricLabel: {
     fontSize: 12,
-    color: '#667085',
+    color: colors.secondaryText,
   },
   metricValue: {
     fontSize: 27,
     fontWeight: 'bold',
-    color: '#15803d',
+    color: colors.primary,
     marginTop: 4,
   },
   chart: {
@@ -863,7 +852,7 @@ const styles = StyleSheet.create({
   },
   barValue: {
     fontSize: 9,
-    color: '#64748b',
+    color: colors.secondaryText,
     marginBottom: 5,
   },
   barTrack: {
@@ -871,7 +860,7 @@ const styles = StyleSheet.create({
     width: '75%',
     maxWidth: 35,
     justifyContent: 'flex-end',
-    backgroundColor: '#edf2f7',
+    backgroundColor: colors.input,
     borderRadius: 5,
     overflow: 'hidden',
   },
@@ -882,23 +871,23 @@ const styles = StyleSheet.create({
   },
   barLabel: {
     fontSize: 10,
-    color: '#667085',
+    color: colors.secondaryText,
     marginTop: 7,
   },
   averageText: {
     fontSize: 12,
-    color: '#667085',
+    color: colors.secondaryText,
     marginTop: 6,
   },
   hint: {
-    color: '#667085',
+    color: colors.secondaryText,
     fontSize: 12,
     marginBottom: 12,
   },
   categoryTotal: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: colors.text,
     marginBottom: 18,
   },
   categoryEntry: {
@@ -926,22 +915,22 @@ const styles = StyleSheet.create({
   categoryName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#344054',
+    color: colors.text,
   },
   categoryCount: {
     fontSize: 11,
-    color: '#667085',
+    color: colors.secondaryText,
     marginTop: 3,
   },
   categoryAmount: {
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: colors.text,
     fontSize: 14,
   },
   categoryTrack: {
     height: 7,
     borderRadius: 10,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: colors.input,
     overflow: 'hidden',
   },
   categoryFill: {
@@ -949,18 +938,18 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   emptySection: {
-    color: '#98a2b3',
+    color: colors.secondaryText,
     textAlign: 'center',
     paddingVertical: 18,
   },
   sectionTitle: {
     fontSize: 19,
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: colors.text,
     marginBottom: 13,
   },
   tripCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 16,
     marginBottom: 14,
@@ -971,24 +960,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: colors.border,
     paddingBottom: 12,
     marginBottom: 10,
   },
   tripDate: {
     fontSize: 15,
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: colors.text,
   },
   tripCount: {
     fontSize: 12,
-    color: '#667085',
+    color: colors.secondaryText,
     marginTop: 4,
   },
   tripTotal: {
     fontSize: 19,
     fontWeight: 'bold',
-    color: '#15803d',
+    color: colors.primary,
   },
   tripItem: {
     flexDirection: 'row',
@@ -1007,17 +996,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   tripItemName: {
-    color: '#344054',
+    color: colors.text,
     fontSize: 13,
     fontWeight: '600',
   },
   tripItemDetail: {
-    color: '#667085',
+    color: colors.secondaryText,
     fontSize: 11,
     marginTop: 4,
   },
   tripItemTotal: {
-    color: '#344054',
+    color: colors.text,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1028,7 +1017,7 @@ const styles = StyleSheet.create({
   },
   shopAgainButton: {
     flex: 1,
-    backgroundColor: '#15803d',
+    backgroundColor: colors.primary,
     borderRadius: 10,
     padding: 12,
     flexDirection: 'row',
@@ -1044,8 +1033,8 @@ const styles = StyleSheet.create({
   deleteButton: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fff7f7',
+    borderColor: dark ? colors.border : '#fecaca',
+    backgroundColor: dark ? colors.input : '#fff7f7',
     borderRadius: 10,
     padding: 12,
     flexDirection: 'row',

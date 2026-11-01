@@ -1,5 +1,5 @@
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,9 +10,10 @@ import {
   Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useTheme } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrency, formatMoney } from '../utils/currency';
+import { lightColors, darkColors } from '../theme/colors';
 
 import {
   Category,
@@ -43,6 +44,9 @@ const BUDGET_KEY = '@shopping_budget';
 
 
 export default function BudgetScreen() {
+  const { dark } = useTheme();
+  const colors = dark ? darkColors : lightColors;
+  const styles = useMemo(() => createStyles(colors, dark), [dark]);
   const [currency, setCurrency] = useState('GBP');
 
   const money = (value: number) => formatMoney(value, currency);
@@ -250,7 +254,7 @@ export default function BudgetScreen() {
           <Ionicons
             name="wallet-outline"
             size={25}
-            color="#15803D"
+            color={colors.primary}
           />
         </View>
       </View>
@@ -394,7 +398,7 @@ export default function BudgetScreen() {
               <View
                 style={[
                   styles.legendDot,
-                  { backgroundColor: '#D5EBDD' },
+                  { backgroundColor: dark ? '#475569' : '#D5EBDD' },
                 ]}
               />
 
@@ -452,8 +456,7 @@ export default function BudgetScreen() {
                     style={[
                       styles.categoryIcon,
                       {
-                        backgroundColor:
-                          entry.category.background,
+                        backgroundColor: dark ? colors.input : entry.category.background,
                       },
                     ]}
                   >
@@ -518,7 +521,7 @@ export default function BudgetScreen() {
               <Ionicons
                 name="create-outline"
                 size={17}
-                color="#15803D"
+                color={colors.primary}
               />
 
               <Text style={styles.editButtonText}>
@@ -536,6 +539,7 @@ export default function BudgetScreen() {
               onChangeText={setBudgetInput}
               keyboardType="decimal-pad"
               placeholder="Enter budget amount"
+              placeholderTextColor={colors.secondaryText}
             />
 
             <View style={styles.editActions}>
@@ -571,10 +575,10 @@ export default function BudgetScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: typeof lightColors, dark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: colors.background,
   },
   content: {
     padding: 16,
@@ -589,20 +593,20 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: 'bold',
-    color: '#153C2E',
+    color: colors.text,
   },
   subtitle: {
-    color: '#667085',
+    color: colors.secondaryText,
     fontSize: 13,
     marginTop: 4,
   },
   headerIcon: {
-    backgroundColor: '#E2F3E8',
+    backgroundColor: dark ? '#1D4032' : '#E2F3E8',
     padding: 12,
     borderRadius: 14,
   },
   hero: {
-    backgroundColor: '#153C2E',
+    backgroundColor: dark ? '#123D30' : '#153C2E',
     padding: 22,
     borderRadius: 20,
     marginBottom: 16,
@@ -660,24 +664,24 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 16,
     elevation: 2,
   },
   summaryLabel: {
     fontSize: 12,
-    color: '#667085',
+    color: colors.secondaryText,
     marginTop: 10,
   },
   summaryAmount: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#25364A',
+    color: colors.text,
     marginTop: 5,
   },
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 17,
     marginBottom: 16,
@@ -686,11 +690,11 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 17,
     fontWeight: 'bold',
-    color: '#153C2E',
+    color: colors.text,
   },
   cardHint: {
     fontSize: 12,
-    color: '#667085',
+    color: colors.secondaryText,
     marginTop: 5,
     marginBottom: 14,
   },
@@ -706,7 +710,7 @@ const styles = StyleSheet.create({
     height: 115,
     borderRadius: 58,
     borderWidth: 11,
-    borderColor: '#D5EBDD',
+    borderColor: dark ? '#334155' : '#D5EBDD',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -716,7 +720,7 @@ const styles = StyleSheet.create({
   },
   percentageCaption: {
     fontSize: 11,
-    color: '#667085',
+    color: colors.secondaryText,
   },
   progressDetails: {
     flex: 1,
@@ -733,16 +737,16 @@ const styles = StyleSheet.create({
     borderRadius: 5,
   },
   legendText: {
-    color: '#344054',
+    color: colors.text,
     fontSize: 13,
   },
   progressHint: {
     fontSize: 12,
-    color: '#667085',
+    color: colors.secondaryText,
   },
   secondaryTrack: {
     height: 8,
-    backgroundColor: '#EDF2F7',
+    backgroundColor: dark ? '#334155' : '#EDF2F7',
     borderRadius: 10,
     overflow: 'hidden',
   },
@@ -774,16 +778,16 @@ const styles = StyleSheet.create({
   categoryName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#344054',
+    color: colors.text,
   },
   categoryAmount: {
     fontSize: 14,
     fontWeight: 'bold',
-    color: '#153C2E',
+    color: colors.text,
   },
   categoryTrack: {
     height: 7,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: dark ? '#334155' : '#F1F5F9',
     borderRadius: 10,
     overflow: 'hidden',
   },
@@ -792,7 +796,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   emptyText: {
-    color: '#98A2B3',
+    color: colors.secondaryText,
     textAlign: 'center',
     paddingVertical: 18,
   },
@@ -806,28 +810,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#EAF7EF',
+    backgroundColor: dark ? '#1D4032' : '#EAF7EF',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 9,
   },
   editButtonText: {
-    color: '#15803D',
+    color: colors.primary,
     fontWeight: '600',
   },
   currentBudget: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#153C2E',
+    color: colors.text,
   },
   input: {
+    backgroundColor: colors.input,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.border,
     borderRadius: 10,
     padding: 12,
     fontSize: 17,
     marginBottom: 12,
-    color: '#153C2E',
+    color: colors.text,
   },
   editActions: {
     flexDirection: 'row',
@@ -836,12 +841,12 @@ const styles = StyleSheet.create({
   cancelButton: {
     flex: 1,
     padding: 13,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: dark ? '#334155' : '#F1F5F9',
     borderRadius: 10,
     alignItems: 'center',
   },
   cancelText: {
-    color: '#475569',
+    color: colors.secondaryText,
     fontWeight: '600',
   },
   saveButton: {

@@ -2,6 +2,7 @@
 import React, {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -22,6 +23,8 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
+
+import { useTheme } from '@react-navigation/native';
 
 import { getCurrency, formatMoney } from '../utils/currency';
 
@@ -76,6 +79,8 @@ function parseItems(raw: string | null): ShoppingItem[] {
 }
 
 export default function ShoppingScreen() {
+  const { dark } = useTheme();
+  const styles = useMemo(() => createStyles(dark), [dark]);
   const [currency, setCurrency] = useState('GBP');
   const money = (value: number) => formatMoney(value, currency);
     useFocusEffect(
@@ -577,7 +582,7 @@ export default function ShoppingScreen() {
             style={[
               styles.categoryOption,
               {
-                backgroundColor: category.background,
+                backgroundColor: dark ? '#263445' : category.background,
                 borderColor: active
                   ? category.accent
                   : 'transparent',
@@ -616,7 +621,7 @@ export default function ShoppingScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
 
       <FlatList
         data={filteredItems}
@@ -769,6 +774,7 @@ export default function ShoppingScreen() {
                   value={itemName}
                   onChangeText={setItemName}
                   placeholder="Item name"
+                   placeholderTextColor={dark ? '#94A3B8' : '#667085'}
                 />
 
                 <View style={styles.inputRow}>
@@ -777,6 +783,7 @@ export default function ShoppingScreen() {
                     value={itemPrice}
                     onChangeText={setItemPrice}
                     placeholder="Unit price"
+                     placeholderTextColor={dark ? '#94A3B8' : '#667085'}
                     keyboardType="decimal-pad"
                   />
 
@@ -785,6 +792,7 @@ export default function ShoppingScreen() {
                     value={itemQuantity}
                     onChangeText={setItemQuantity}
                     placeholder="Quantity"
+                     placeholderTextColor={dark ? '#94A3B8' : '#667085'}
                     keyboardType="number-pad"
                   />
                 </View>
@@ -823,6 +831,7 @@ export default function ShoppingScreen() {
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 placeholder="Search shopping items..."
+                 placeholderTextColor={dark ? '#94A3B8' : '#667085'}
                 autoCapitalize="none"
               />
 
@@ -991,7 +1000,7 @@ export default function ShoppingScreen() {
                 styles.itemRow,
                 {
                   backgroundColor:
-                    category.background,
+                    dark ? '#263445' : category.background,
                 },
               ]}
             >
@@ -1016,6 +1025,7 @@ export default function ShoppingScreen() {
                   <Text
                     style={[
                       styles.itemName,
+                       dark && { color: '#F8FAFC' },
                       item.purchased &&
                         styles.purchased,
                     ]}
@@ -1044,13 +1054,13 @@ export default function ShoppingScreen() {
               </TouchableOpacity>
 
               <View style={styles.priceColumn}>
-                <Text style={styles.itemPrice}>
+                <Text style={[styles.itemPrice, dark && { color: '#F8FAFC' }]}>
                   {money(
                     item.price * item.quantity
                   )}
                 </Text>
 
-                <Text style={styles.quantityText}>
+                <Text style={[styles.quantityText, dark && { color: '#CBD5E1' }]}>
                   {item.quantity} × {money(item.price)}
                 </Text>
               </View>
@@ -1200,10 +1210,10 @@ export default function ShoppingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (dark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f7fa',
+    backgroundColor: dark ? '#101827' : '#f5f7fa',
     paddingTop: StatusBar.currentHeight || 0,
   },
   content: {
@@ -1218,16 +1228,16 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: dark ? '#F8FAFC' : '#153c2e',
   },
   subtitle: {
-    color: '#667085',
+    color: dark ? '#94A3B8' : '#667085',
     fontSize: 13,
     marginTop: 4,
     marginBottom: 16,
   },
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: dark ? '#1E293B' : '#ffffff',
     borderRadius: 14,
     padding: 16,
     marginBottom: 16,
@@ -1242,7 +1252,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: dark ? '#F8FAFC' : '#153c2e',
   },
   summaryRow: {
     flexDirection: 'row',
@@ -1250,18 +1260,18 @@ const styles = StyleSheet.create({
     marginVertical: 10,
   },
   smallLabel: {
-    color: '#667085',
+    color: dark ? '#94A3B8' : '#667085',
     fontSize: 12,
   },
   amount: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#15803d',
+    color: dark ? '#4ADE80' : '#15803d',
   },
   progressTrack: {
     height: 8,
     borderRadius: 8,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: dark ? '#334155' : '#e5e7eb',
     overflow: 'hidden',
   },
   progressFill: {
@@ -1271,19 +1281,19 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   label: {
-    color: '#344054',
+    color: dark ? '#E2E8F0' : '#344054',
     fontWeight: '600',
     marginBottom: 8,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#d0d5dd',
-    backgroundColor: '#ffffff',
+    borderColor: dark ? '#475569' : '#d0d5dd',
+    backgroundColor: dark ? '#1E293B' : '#ffffff',
     borderRadius: 10,
     padding: 12,
     fontSize: 16,
     marginBottom: 12,
-    color: '#101828',
+    color: dark ? '#F8FAFC' : '#101828',
   },
   inputRow: {
     flexDirection: 'row',
@@ -1294,7 +1304,7 @@ const styles = StyleSheet.create({
   },
   hint: {
     fontSize: 12,
-    color: '#667085',
+    color: dark ? '#94A3B8' : '#667085',
     marginTop: 5,
   },
   warning: {
@@ -1303,7 +1313,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   primaryButton: {
-    backgroundColor: '#15803d',
+    backgroundColor: dark ? '#15803D' : '#15803d',
     borderRadius: 10,
     padding: 14,
     flexDirection: 'row',
@@ -1318,7 +1328,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   darkButton: {
-    backgroundColor: '#153c2e',
+    backgroundColor: dark ? '#166534' : '#153c2e',
     borderRadius: 10,
     padding: 14,
     alignItems: 'center',
@@ -1342,10 +1352,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   searchBox: {
-    backgroundColor: '#ffffff',
+    backgroundColor: dark ? '#1E293B' : '#ffffff',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#d0d5dd',
+    borderColor: dark ? '#475569' : '#d0d5dd',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
@@ -1355,7 +1365,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     padding: 12,
-    color: '#101828',
+    color: dark ? '#F8FAFC' : '#101828',
   },
   filterScroll: {
     marginBottom: 16,
@@ -1375,10 +1385,10 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: dark ? '#F8FAFC' : '#153c2e',
   },
   clearText: {
-    color: '#15803d',
+    color: dark ? '#4ADE80' : '#15803d',
     fontWeight: 'bold',
     fontSize: 12,
   },
@@ -1401,12 +1411,12 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   itemName: {
-    color: '#101828',
+    color: dark ? '#F8FAFC' : '#101828',
     fontSize: 15,
     fontWeight: '500',
   },
   purchased: {
-    color: '#94a3b8',
+    color: dark ? '#94A3B8' : '#94a3b8',
     textDecorationLine: 'line-through',
   },
   categoryLabel: {
@@ -1425,19 +1435,19 @@ const styles = StyleSheet.create({
   },
   itemPrice: {
     fontWeight: 'bold',
-    color: '#344054',
+    color: dark ? '#E2E8F0' : '#344054',
     fontSize: 13,
   },
   quantityText: {
     fontSize: 10,
-    color: '#64748b',
+    color: dark ? '#94A3B8' : '#64748b',
     marginTop: 4,
   },
   action: {
     padding: 7,
   },
   emptyText: {
-    color: '#94a3b8',
+    color: dark ? '#94A3B8' : '#94a3b8',
     textAlign: 'center',
     marginTop: 24,
   },
@@ -1448,7 +1458,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   modalCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: dark ? '#1E293B' : '#ffffff',
     borderRadius: 18,
     padding: 20,
     maxHeight: '85%',
@@ -1456,7 +1466,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#153c2e',
+    color: dark ? '#F8FAFC' : '#153c2e',
   },
   modalActions: {
     flexDirection: 'row',
@@ -1466,18 +1476,18 @@ const styles = StyleSheet.create({
   cancelButton: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#d0d5dd',
+    borderColor: dark ? '#475569' : '#d0d5dd',
     borderRadius: 10,
     padding: 14,
     alignItems: 'center',
   },
   cancelText: {
     fontWeight: 'bold',
-    color: '#475569',
+    color: dark ? '#CBD5E1' : '#475569',
   },
   confirmButton: {
     flex: 1,
-    backgroundColor: '#15803d',
+    backgroundColor: dark ? '#15803D' : '#15803d',
     borderRadius: 10,
     padding: 14,
     alignItems: 'center',
