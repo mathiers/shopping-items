@@ -18,6 +18,9 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
+import './src/i18n';
+import { loadSavedLanguage } from './src/i18n';
+
 import ShoppingScreen from './src/screens/ShoppingScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import BudgetScreen from './src/screens/BudgetScreen';
@@ -192,6 +195,10 @@ function MainNavigator() {
 }
 
 export default function App() {
+  React.useEffect(() => {
+    loadSavedLanguage();
+  }, []);
+
   return (
     <SafeAreaProvider>
       <ThemeProvider>
