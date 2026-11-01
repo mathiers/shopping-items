@@ -21,6 +21,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { getCurrency, formatMoney } from '../utils/currency';
 import { lightColors, darkColors } from '../theme/colors';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+
+
 import {
   getShoppingHistory,
   ShoppingTrip,
@@ -194,6 +198,7 @@ function buildCategorySpending(
 }
 
 export default function HistoryScreen() {
+  const insets = useSafeAreaInsets();
   const { dark } = useTheme();
   const colors = dark ? darkColors : lightColors;
   const styles = React.useMemo(() => createStyles(colors, dark), [dark]);
@@ -449,10 +454,13 @@ export default function HistoryScreen() {
   }
 
   return (
-    <ScrollView
+   <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.content}
-    >
+      contentContainerStyle={[
+        styles.content,
+        { paddingTop: insets.top + 12 },
+      ]}
+  >
       <Text style={styles.title}>
         Shopping History
       </Text>

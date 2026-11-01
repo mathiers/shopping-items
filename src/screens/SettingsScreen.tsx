@@ -17,6 +17,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { useAppTheme } from '../theme/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export type SettingsStackParams = {
   SettingsMain: undefined;
@@ -61,6 +62,7 @@ const LANGUAGES = [
 ];
 
 export default function SettingsScreen() {
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<Navigation>();
   const { darkMode, setDarkMode } = useAppTheme();
   const dark = darkMode;
@@ -150,8 +152,11 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: background }}
-      contentContainerStyle={styles.content}
+      style={styles.container}
+      contentContainerStyle={[
+        styles.content,
+        { paddingTop: insets.top + 12 },
+      ]}
     >
       <StatusBar
         barStyle={dark ? 'light-content' : 'dark-content'}
