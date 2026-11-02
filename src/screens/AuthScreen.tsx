@@ -1,5 +1,6 @@
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+
 import {
   View,
   Text,
@@ -12,6 +13,8 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
+
+import { Ionicons } from '@expo/vector-icons';
 
 import {
   loginUser,
@@ -31,19 +34,40 @@ export default function AuthScreen({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
+ const emailRef = useRef<React.ElementRef<typeof TextInput>>(null);
+ const passwordRef = useRef<React.ElementRef<typeof TextInput>>(null);
+
   const submit = async () => {
-    if (!email.trim() || !password) {
+    if (loading) return;
+
+    if (registering && !name.trim()) {
       Alert.alert(
-        'Missing details',
-        'Enter your email and password.'
+        'Missing name',
+        'Please enter your full name.'
       );
       return;
     }
 
-    if (registering && !name.trim()) {
-      Alert.alert('Missing name', 'Enter your name.');
+    if (!email.trim() || !password) {
+      Alert.alert(
+        'Missing details',
+        'Please enter your email and password.'
+      );
+      return;
+    }
+
+    const validEmail =
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
+    if (!validEmail) {
+      Alert.alert(
+        'Invalid email',
+        'Please enter a valid email address.'
+      );
       return;
     }
 
@@ -64,6 +88,7 @@ export default function AuthScreen({
         await loginUser(email, password);
       }
 
+      setPassword('');
       onAuthenticated();
     } catch (error: any) {
       Alert.alert(
@@ -75,14 +100,25 @@ export default function AuthScreen({
     }
   };
 
+  const toggleMode = () => {
+    if (loading) return;
+
+    setRegistering(previous => !previous);
+    setPassword('');
+    setShowPassword(false);
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={
+        Platform.OS === 'ios' ? 'padding' : undefined
+      }
     >
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         <Text style={styles.logo}>🛒</Text>
 
@@ -96,7 +132,9 @@ export default function AuthScreen({
 
         <View style={styles.card}>
           <Text style={styles.heading}>
-            {registering ? 'Create account' : 'Welcome back'}
+            {registering
+              ? 'Create account'
+              : 'Welcome back'}
           </Text>
 
           {registering && (
@@ -107,11 +145,17 @@ export default function AuthScreen({
               value={name}
               onChangeText={setName}
               autoCapitalize="words"
+              autoComplete="name"
+              returnKeyType="next"
+              onSubmitEditing={() =>
+                emailRef.current?.focus()
+              }
               editable={!loading}
             />
           )}
 
           <TextInput
+            ref={emailRef}
             style={styles.input}
             placeholder="Email address"
             placeholderTextColor="#64748B"
@@ -121,40 +165,84 @@ export default function AuthScreen({
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="email"
-            editable={!loading}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#64748B"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoComplete={
-              registering ? 'new-password' : 'current-password'
+            returnKeyType="next"
+            onSubmitEditing={() =>
+              passwordRef.current?.focus()
             }
             editable={!loading}
           />
 
+          <View style={styles.passwordContainer}>
+            <TextInput
+              ref={passwordRef}
+              style={styles.passwordInput}
+              placeholder="Password"
+              placeholderTextColor="#64748B"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete={
+                registering
+                  ? 'new-password'
+                  : 'current-password'
+              }
+              returnKeyType="done"
+              onSubmitEditing={submit}
+              editable={!loading}
+            />
+
+            <TouchableOpacity
+              style={styles.eyeButton}
+              onPress={() =>
+                setShowPassword(previous => !previous)
+              }
+              disabled={loading}
+              accessibilityRole="button"
+              accessibilityLabel={
+                showPassword
+                  ? 'Hide password'
+                  : 'Show password'
+              }
+            >
+              <Ionicons
+                name={
+                  showPassword
+                    ? 'eye-off-outline'
+                    : 'eye-outline'
+                }
+                size={21}
+                color="#64748B"
+              />
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity
-            style={styles.primaryButton}
+            style={[
+              styles.primaryButton,
+              loading && styles.disabledButton,
+            ]}
             onPress={submit}
             disabled={loading}
+            accessibilityRole="button"
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
               <Text style={styles.primaryText}>
-                {registering ? 'Create Account' : 'Sign In'}
+                {registering
+                  ? 'Create Account'
+                  : 'Sign In'}
               </Text>
             )}
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.switchButton}
+            onPress={toggleMode}
             disabled={loading}
-            onPress={() => setRegistering(!registering)}
+            accessibilityRole="button"
           >
             <Text style={styles.switchText}>
               {registering
@@ -169,6 +257,7 @@ export default function AuthScreen({
             style={styles.guestButton}
             onPress={onGuest}
             disabled={loading}
+            accessibilityRole="button"
           >
             <Text style={styles.guestText}>
               Continue as Guest
@@ -189,24 +278,28 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#064E3B',
   },
+
   content: {
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
- },
- logo: {
+  },
+
+  logo: {
     fontSize: 42,
     textAlign: 'center',
     marginBottom: 2,
- },
- title: {
+  },
+
+  title: {
     fontSize: 24,
     fontWeight: '800',
     color: '#FFFFFF',
     textAlign: 'center',
- },
+  },
+
   subtitle: {
     color: '#D1FAE5',
     textAlign: 'center',
@@ -214,6 +307,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 12,
   },
+
   card: {
     width: '100%',
     maxWidth: 340,
@@ -221,13 +315,16 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
   },
+
   heading: {
     fontSize: 19,
     fontWeight: '800',
     color: '#064E3B',
     marginBottom: 12,
   },
+
   input: {
+    width: '100%',
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#CBD5E1',
@@ -238,39 +335,82 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     marginBottom: 10,
   },
+
+  passwordContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+  },
+
+  eyeButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
   primaryButton: {
     backgroundColor: '#15803D',
     borderRadius: 10,
     padding: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
     marginTop: 4,
   },
+
+  disabledButton: {
+    opacity: 0.65,
+  },
+
   primaryText: {
     color: '#FFFFFF',
     fontWeight: '800',
-    fontSize: 16,
+    fontSize: 15,
   },
+
   switchButton: {
     padding: 9,
     alignItems: 'center',
   },
+
   switchText: {
     color: '#15803D',
     fontWeight: '700',
+    fontSize: 13,
+    textAlign: 'center',
   },
+
   divider: {
     height: 1,
     backgroundColor: '#E2E8F0',
     marginVertical: 8,
   },
+
   guestButton: {
     padding: 8,
     alignItems: 'center',
   },
+
   guestText: {
     color: '#475569',
     fontWeight: '700',
+    fontSize: 13,
   },
+
   footer: {
     color: '#D1FAE5',
     textAlign: 'center',
