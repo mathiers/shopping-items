@@ -18,7 +18,8 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useTheme } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { getCurrency, formatMoney } from '../utils/currency';
+import { getCurrency } from '../utils/currency';
+import { formatMoney } from '../utils/formatMoney';
 import { lightColors, darkColors } from '../theme/colors';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';

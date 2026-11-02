@@ -26,7 +26,8 @@ import {
 
 import { useTheme } from '@react-navigation/native';
 
-import { getCurrency, formatMoney } from '../utils/currency';
+import { getCurrency } from '../utils/currency';
+import { formatMoney } from '../utils/formatMoney';
 
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
