@@ -12,6 +12,8 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { Ionicons } from '@expo/vector-icons';
+import AuthScreen from './src/screens/AuthScreen';
+import { getCurrentUser } from './src/services/appwrite';
 
 import {
   SafeAreaProvider,
@@ -194,16 +196,90 @@ function MainNavigator() {
   );
 }
 
-export default function App() {
+
+function AppContent() {
+  const [loading, setLoading] = React.useState(true);
+
+  const [access, setAccess] = React.useState<
+    'login' | 'authenticated' | 'guest'
+  >('login');
+
   React.useEffect(() => {
-    loadSavedLanguage();
+    let active = true;
+
+    const initialise = async () => {
+      try {
+        await loadSavedLanguage();
+
+        const user = await getCurrentUser();
+
+        if (active) {
+          setAccess(user ? 'authenticated' : 'login');
+        }
+      } catch (error) {
+        console.error('Startup error:', error);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    initialise();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
+  if (loading) {
+    return (
+      <View style={authStyles.loadingContainer}>
+        <Text style={authStyles.loadingText}>
+          🛒 Shopping Items
+        </Text>
+        <Text style={authStyles.loadingSubtext}>
+          Loading your shopping companion...
+        </Text>
+      </View>
+    );
+  }
+
+  if (access === 'login') {
+    return (
+      <AuthScreen
+        onAuthenticated={() => setAccess('authenticated')}
+        onGuest={() => setAccess('guest')}
+      />
+    );
+  }
+
+  return <MainNavigator />;
+}
+
+export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <MainNavigator />
+        <AppContent />
       </ThemeProvider>
     </SafeAreaProvider>
   );
 }
+
+const authStyles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#064E3B',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 30,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  loadingSubtext: {
+    color: '#D1FAE5',
+    marginTop: 12,
+  },
+});
+

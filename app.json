@@ -1,20 +1,18 @@
 {
   "expo": {
-    "name": "shopping-items-v58",
+    "name": "Shopping Items",
     "slug": "shopping-items-v58",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#064E3B",
+        "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.mathiers.shoppingitems"
@@ -26,6 +24,10 @@
       "eas": {
         "projectId": "28aa154b-6ab1-4066-8d37-7d0fdc15975c"
       }
-    }
+    },
+    "plugins": [
+      "expo-splash-screen",
+      "expo-web-browser"
+    ]
   }
 }
