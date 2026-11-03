@@ -34,6 +34,13 @@ import {
   logoutUser,
 } from '../services/appwrite';
 
+import {
+  isBiometricAvailable,
+  isBiometricEnabled,
+  enableBiometricLogin,
+  disableBiometricLogin,
+} from '../services/biometrics';
+
 export type SettingsStackParams = {
   SettingsMain: undefined;
   Categories: undefined;
@@ -70,7 +77,6 @@ export default function SettingsScreen({
 }: SettingsProps) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Navigation>();
-
   const { darkMode, setDarkMode } = useAppTheme();
 
   const [currency, setCurrency] = useState('GBP');
@@ -78,19 +84,29 @@ export default function SettingsScreen({
 
   const [accountName, setAccountName] = useState('');
   const [accountEmail, setAccountEmail] = useState('');
-
   const [accountLoading, setAccountLoading] = useState(false);
+
   const [signingOut, setSigningOut] = useState(false);
 
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricBusy, setBiometricBusy] = useState(false);
+
+  // Theme colours
+  const background = darkMode ? '#111827' : '#F5F7FA';
+  const surface = darkMode ? '#1F2937' : '#FFFFFF';
+  const primary = darkMode ? '#F9FAFB' : '#153C2E';
+  const secondary = darkMode ? '#9CA3AF' : '#667085';
+  const divider = darkMode ? '#374151' : '#E5E7EB';
+
+  // Load currency
   useFocusEffect(
     useCallback(() => {
       let active = true;
 
       AsyncStorage.getItem(CURRENCY_KEY)
         .then(saved => {
-          if (active) {
-            setCurrency(saved || 'GBP');
-          }
+          if (active) setCurrency(saved || 'GBP');
         })
         .catch(error => {
           console.error('Currency load error:', error);
@@ -102,6 +118,7 @@ export default function SettingsScreen({
     }, [])
   );
 
+  // Load account information
   useFocusEffect(
     useCallback(() => {
       let active = true;
@@ -117,10 +134,7 @@ export default function SettingsScreen({
           .then(user => {
             if (!active) return;
 
-            setAccountName(
-              user?.name || 'Shopping Items User'
-            );
-
+            setAccountName(user?.name || 'Shopping Items User');
             setAccountEmail(user?.email || '');
           })
           .catch(error => {
@@ -131,11 +145,46 @@ export default function SettingsScreen({
             setAccountEmail('Unable to load account details');
           })
           .finally(() => {
-            if (active) {
-              setAccountLoading(false);
-            }
+            if (active) setAccountLoading(false);
           });
       }
+
+      return () => {
+        active = false;
+      };
+    }, [isGuest])
+  );
+
+  // Load fingerprint settings
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      const loadBiometrics = async () => {
+        try {
+          if (isGuest) {
+            if (active) {
+              setBiometricAvailable(false);
+              setBiometricEnabled(false);
+            }
+            return;
+          }
+
+          const [available, enabled] = await Promise.all([
+            isBiometricAvailable(),
+            isBiometricEnabled(),
+          ]);
+
+          if (active) {
+            setBiometricAvailable(available);
+            setBiometricEnabled(enabled);
+          }
+        } catch (error) {
+          console.error('Biometric settings error:', error);
+        }
+      };
+
+      void loadBiometrics();
 
       return () => {
         active = false;
@@ -151,6 +200,39 @@ export default function SettingsScreen({
     } catch (error) {
       console.error('Currency save error:', error);
       Alert.alert('Error', 'Could not save currency.');
+    }
+  };
+
+  const handleBiometricToggle = async (value: boolean) => {
+    if (biometricBusy || isGuest) return;
+
+    setBiometricBusy(true);
+
+    try {
+      if (value) {
+        const enabled = await enableBiometricLogin();
+
+        if (enabled) {
+          setBiometricEnabled(true);
+        } else {
+          Alert.alert(
+            'Fingerprint not enabled',
+            'Biometric verification was cancelled or unsuccessful.'
+          );
+        }
+      } else {
+        await disableBiometricLogin();
+        setBiometricEnabled(false);
+      }
+    } catch (error) {
+      console.error('Biometric toggle error:', error);
+
+      Alert.alert(
+        'Error',
+        'Could not update fingerprint settings.'
+      );
+    } finally {
+      setBiometricBusy(false);
     }
   };
 
@@ -176,6 +258,14 @@ export default function SettingsScreen({
     try {
       await logoutUser();
 
+      // Disable fingerprint preference after explicit sign-out
+      try {
+        await disableBiometricLogin();
+      } catch (error) {
+        console.error('Biometric cleanup error:', error);
+      }
+
+      setBiometricEnabled(false);
       setAccountName('');
       setAccountEmail('');
 
@@ -197,10 +287,7 @@ export default function SettingsScreen({
       'Sign Out',
       'Are you sure you want to sign out?',
       [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
+        { text: 'Cancel', style: 'cancel' },
         {
           text: 'Sign Out',
           style: 'destructive',
@@ -211,12 +298,6 @@ export default function SettingsScreen({
       ]
     );
   };
-
-  const background = darkMode ? '#111827' : '#F5F7FA';
-  const surface = darkMode ? '#1F2937' : '#FFFFFF';
-  const primary = darkMode ? '#F9FAFB' : '#153C2E';
-  const secondary = darkMode ? '#9CA3AF' : '#667085';
-  const divider = darkMode ? '#374151' : '#E5E7EB';
 
   const selectedCurrency = CURRENCIES.find(
     item => item.code === currency
@@ -234,9 +315,7 @@ export default function SettingsScreen({
       ]}
     >
       <StatusBar
-        barStyle={
-          darkMode ? 'light-content' : 'dark-content'
-        }
+        barStyle={darkMode ? 'light-content' : 'dark-content'}
       />
 
       <Text style={[styles.title, { color: primary }]}>
@@ -247,18 +326,13 @@ export default function SettingsScreen({
         Personalise your shopping experience
       </Text>
 
-      {/* ACCOUNT DETAILS */}
+      {/* MY ACCOUNT */}
 
       <Text style={[styles.section, { color: secondary }]}>
         MY ACCOUNT
       </Text>
 
-      <View
-        style={[
-          styles.card,
-          { backgroundColor: surface },
-        ]}
-      >
+      <View style={[styles.card, { backgroundColor: surface }]}>
         <View style={styles.row}>
           <View
             style={[
@@ -267,23 +341,14 @@ export default function SettingsScreen({
             ]}
           >
             <Ionicons
-              name={
-                isGuest
-                  ? 'person-outline'
-                  : 'person-circle-outline'
-              }
+              name={isGuest ? 'person-outline' : 'person-circle-outline'}
               size={25}
               color="#15803D"
             />
           </View>
 
           <View style={styles.rowText}>
-            <Text
-              style={[
-                styles.rowTitle,
-                { color: primary },
-              ]}
-            >
+            <Text style={[styles.rowTitle, { color: primary }]}>
               {isGuest
                 ? 'Guest Mode'
                 : accountLoading
@@ -291,12 +356,7 @@ export default function SettingsScreen({
                   : accountName || 'My Account'}
             </Text>
 
-            <Text
-              style={[
-                styles.rowSubtitle,
-                { color: secondary },
-              ]}
-            >
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
               {isGuest
                 ? 'Using Shopping Items without an account'
                 : accountEmail || 'Signed in'}
@@ -304,10 +364,7 @@ export default function SettingsScreen({
           </View>
 
           {accountLoading && (
-            <ActivityIndicator
-              size="small"
-              color="#15803D"
-            />
+            <ActivityIndicator size="small" color="#15803D" />
           )}
         </View>
       </View>
@@ -318,50 +375,29 @@ export default function SettingsScreen({
         APPEARANCE
       </Text>
 
-      <View
-        style={[
-          styles.card,
-          { backgroundColor: surface },
-        ]}
-      >
+      <View style={[styles.card, { backgroundColor: surface }]}>
         <View style={styles.row}>
           <View
             style={[
               styles.iconBox,
               {
-                backgroundColor: darkMode
-                  ? '#374151'
-                  : '#EAF7EF',
+                backgroundColor: darkMode ? '#374151' : '#EAF7EF',
               },
             ]}
           >
             <Ionicons
-              name={
-                darkMode
-                  ? 'moon-outline'
-                  : 'sunny-outline'
-              }
+              name={darkMode ? 'moon-outline' : 'sunny-outline'}
               size={23}
               color="#16A34A"
             />
           </View>
 
           <View style={styles.rowText}>
-            <Text
-              style={[
-                styles.rowTitle,
-                { color: primary },
-              ]}
-            >
+            <Text style={[styles.rowTitle, { color: primary }]}>
               Dark Mode
             </Text>
 
-            <Text
-              style={[
-                styles.rowSubtitle,
-                { color: secondary },
-              ]}
-            >
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
               Dark appearance for the app
             </Text>
           </View>
@@ -373,9 +409,7 @@ export default function SettingsScreen({
               false: '#CBD5E1',
               true: '#86EFAC',
             }}
-            thumbColor={
-              darkMode ? '#15803D' : '#FFFFFF'
-            }
+            thumbColor={darkMode ? '#15803D' : '#FFFFFF'}
           />
         </View>
       </View>
@@ -386,17 +420,10 @@ export default function SettingsScreen({
         REGION
       </Text>
 
-      <View
-        style={[
-          styles.card,
-          { backgroundColor: surface },
-        ]}
-      >
+      <View style={[styles.card, { backgroundColor: surface }]}>
         <TouchableOpacity
           style={styles.row}
-          onPress={() =>
-            setCurrencyExpanded(value => !value)
-          }
+          onPress={() => setCurrencyExpanded(value => !value)}
           accessibilityRole="button"
           accessibilityLabel="Select currency"
         >
@@ -414,30 +441,18 @@ export default function SettingsScreen({
           </View>
 
           <View style={styles.rowText}>
-            <Text
-              style={[
-                styles.rowTitle,
-                { color: primary },
-              ]}
-            >
+            <Text style={[styles.rowTitle, { color: primary }]}>
               Currency
             </Text>
 
-            <Text
-              style={[
-                styles.rowSubtitle,
-                { color: secondary },
-              ]}
-            >
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
               {selectedCurrency?.label || 'British Pound'}
             </Text>
           </View>
 
           <Ionicons
             name={
-              currencyExpanded
-                ? 'chevron-up'
-                : 'chevron-down'
+              currencyExpanded ? 'chevron-up' : 'chevron-down'
             }
             size={20}
             color={secondary}
@@ -452,20 +467,11 @@ export default function SettingsScreen({
                 styles.option,
                 { borderTopColor: divider },
               ]}
-              onPress={() =>
-                updateCurrency(item.code)
-              }
+              onPress={() => updateCurrency(item.code)}
               accessibilityRole="button"
-              accessibilityLabel={
-                `Select ${item.code}`
-              }
+              accessibilityLabel={`Select ${item.code}`}
             >
-              <Text
-                style={[
-                  styles.optionText,
-                  { color: primary },
-                ]}
-              >
+              <Text style={[styles.optionText, { color: primary }]}>
                 {item.label}
               </Text>
 
@@ -486,17 +492,10 @@ export default function SettingsScreen({
         SHOPPING PREFERENCES
       </Text>
 
-      <View
-        style={[
-          styles.card,
-          { backgroundColor: surface },
-        ]}
-      >
+      <View style={[styles.card, { backgroundColor: surface }]}>
         <TouchableOpacity
           style={styles.row}
-          onPress={() =>
-            navigation.navigate('Categories')
-          }
+          onPress={() => navigation.navigate('Categories')}
           accessibilityRole="button"
         >
           <View
@@ -513,21 +512,11 @@ export default function SettingsScreen({
           </View>
 
           <View style={styles.rowText}>
-            <Text
-              style={[
-                styles.rowTitle,
-                { color: primary },
-              ]}
-            >
+            <Text style={[styles.rowTitle, { color: primary }]}>
               Categories
             </Text>
 
-            <Text
-              style={[
-                styles.rowSubtitle,
-                { color: secondary },
-              ]}
-            >
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
               Manage categories, icons, colours and order
             </Text>
           </View>
@@ -540,55 +529,34 @@ export default function SettingsScreen({
         </TouchableOpacity>
       </View>
 
-      {/* AUTHENTICATION ACTION */}
+      {/* ACCOUNT ACCESS */}
 
       <Text style={[styles.section, { color: secondary }]}>
         ACCOUNT ACCESS
       </Text>
 
-      <View
-        style={[
-          styles.card,
-          { backgroundColor: surface },
-        ]}
-      >
+      <View style={[styles.card, { backgroundColor: surface }]}>
         <TouchableOpacity
           style={styles.row}
-          onPress={
-            isGuest
-              ? () => onSignOut?.()
-              : handleSignOut
-          }
+          onPress={isGuest ? () => onSignOut?.() : handleSignOut}
           disabled={signingOut}
           accessibilityRole="button"
           accessibilityLabel={
-            isGuest
-              ? 'Sign in or register'
-              : 'Sign out'
+            isGuest ? 'Sign in or register' : 'Sign out'
           }
         >
           <View
             style={[
               styles.iconBox,
               {
-                backgroundColor: isGuest
-                  ? '#EAF7EF'
-                  : '#FEE2E2',
+                backgroundColor: isGuest ? '#EAF7EF' : '#FEE2E2',
               },
             ]}
           >
             <Ionicons
-              name={
-                isGuest
-                  ? 'log-in-outline'
-                  : 'log-out-outline'
-              }
+              name={isGuest ? 'log-in-outline' : 'log-out-outline'}
               size={23}
-              color={
-                isGuest
-                  ? '#15803D'
-                  : '#DC2626'
-              }
+              color={isGuest ? '#15803D' : '#DC2626'}
             />
           </View>
 
@@ -596,11 +564,7 @@ export default function SettingsScreen({
             <Text
               style={[
                 styles.rowTitle,
-                {
-                  color: isGuest
-                    ? primary
-                    : '#DC2626',
-                },
+                { color: isGuest ? primary : '#DC2626' },
               ]}
             >
               {isGuest
@@ -610,12 +574,7 @@ export default function SettingsScreen({
                   : 'Sign Out'}
             </Text>
 
-            <Text
-              style={[
-                styles.rowSubtitle,
-                { color: secondary },
-              ]}
-            >
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
               {isGuest
                 ? 'Access your Shopping Items account'
                 : 'Securely end your current session'}
@@ -623,10 +582,7 @@ export default function SettingsScreen({
           </View>
 
           {signingOut ? (
-            <ActivityIndicator
-              size="small"
-              color="#DC2626"
-            />
+            <ActivityIndicator size="small" color="#DC2626" />
           ) : (
             <Ionicons
               name="chevron-forward"
@@ -635,6 +591,60 @@ export default function SettingsScreen({
             />
           )}
         </TouchableOpacity>
+
+        {/* FINGERPRINT UNLOCK - INSIDE THE CARD */}
+
+        {!isGuest && (
+          <View
+            style={[
+              styles.row,
+              {
+                marginTop: 16,
+                paddingTop: 16,
+                borderTopWidth: 1,
+                borderTopColor: divider,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.iconBox,
+                { backgroundColor: '#EAF7EF' },
+              ]}
+            >
+              <Ionicons
+                name="finger-print-outline"
+                size={23}
+                color="#15803D"
+              />
+            </View>
+
+            <View style={styles.rowText}>
+              <Text style={[styles.rowTitle, { color: primary }]}>
+                Fingerprint Unlock
+              </Text>
+
+              <Text style={[styles.rowSubtitle, { color: secondary }]}>
+                {biometricAvailable
+                  ? 'Fingerprint lock setup (5-minute lock coming next)'
+                  : 'Biometrics unavailable on this device'}
+              </Text>
+            </View>
+
+            <Switch
+              value={biometricEnabled}
+              onValueChange={handleBiometricToggle}
+              disabled={!biometricAvailable || biometricBusy}
+              trackColor={{
+                false: '#CBD5E1',
+                true: '#86EFAC',
+              }}
+              thumbColor={
+                biometricEnabled ? '#15803D' : '#FFFFFF'
+              }
+            />
+          </View>
+        )}
       </View>
 
       {/* ABOUT */}
@@ -643,12 +653,7 @@ export default function SettingsScreen({
         ABOUT
       </Text>
 
-      <View
-        style={[
-          styles.card,
-          { backgroundColor: surface },
-        ]}
-      >
+      <View style={[styles.card, { backgroundColor: surface }]}>
         <View style={styles.row}>
           <View
             style={[
@@ -664,21 +669,11 @@ export default function SettingsScreen({
           </View>
 
           <View style={styles.rowText}>
-            <Text
-              style={[
-                styles.rowTitle,
-                { color: primary },
-              ]}
-            >
+            <Text style={[styles.rowTitle, { color: primary }]}>
               Shopping Items
             </Text>
 
-            <Text
-              style={[
-                styles.rowSubtitle,
-                { color: secondary },
-              ]}
-            >
+            <Text style={[styles.rowSubtitle, { color: secondary }]}>
               Shopping list and budget manager
             </Text>
           </View>
@@ -688,12 +683,7 @@ export default function SettingsScreen({
       {/* FOOTER */}
 
       <View style={styles.footer}>
-        <Text
-          style={[
-            styles.footerText,
-            { color: secondary },
-          ]}
-        >
+        <Text style={[styles.footerText, { color: secondary }]}>
           Developed by Mathias Moyo
         </Text>
 
@@ -714,23 +704,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-
   content: {
     padding: 16,
     paddingBottom: 45,
   },
-
   title: {
     fontSize: 26,
     fontWeight: 'bold',
   },
-
   subtitle: {
     fontSize: 13,
     marginTop: 5,
     marginBottom: 22,
   },
-
   section: {
     fontSize: 11,
     fontWeight: 'bold',
@@ -738,21 +724,18 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     marginTop: 9,
   },
-
   card: {
     borderRadius: 16,
     padding: 15,
     marginBottom: 20,
     elevation: 2,
   },
-
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     minHeight: 53,
   },
-
   iconBox: {
     width: 44,
     height: 44,
@@ -760,21 +743,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
   rowText: {
     flex: 1,
   },
-
   rowTitle: {
     fontSize: 15,
     fontWeight: '600',
   },
-
   rowSubtitle: {
     fontSize: 12,
     marginTop: 4,
   },
-
   option: {
     paddingVertical: 13,
     paddingHorizontal: 7,
@@ -783,22 +762,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-
   optionText: {
     fontSize: 14,
     flexShrink: 1,
   },
-
   footer: {
     alignItems: 'center',
     paddingVertical: 20,
     gap: 7,
   },
-
   footerText: {
     fontSize: 11,
   },
-
   email: {
     color: '#15803D',
     fontSize: 11,
