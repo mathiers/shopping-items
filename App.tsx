@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
 import {
@@ -12,8 +12,6 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { Ionicons } from '@expo/vector-icons';
-import AuthScreen from './src/screens/AuthScreen';
-import { getCurrentUser } from './src/services/appwrite';
 
 import {
   SafeAreaProvider,
@@ -23,11 +21,14 @@ import {
 import './src/i18n';
 import { loadSavedLanguage } from './src/i18n';
 
+import AuthScreen from './src/screens/AuthScreen';
 import ShoppingScreen from './src/screens/ShoppingScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import BudgetScreen from './src/screens/BudgetScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
+
+import { getCurrentUser } from './src/services/appwrite';
 
 import type { SettingsStackParams } from './src/screens/SettingsScreen';
 
@@ -38,6 +39,10 @@ import {
   useAppTheme,
 } from './src/theme/ThemeContext';
 
+// --------------------------------------------------
+// TYPES
+// --------------------------------------------------
+
 type RootTabParamList = {
   Shop: undefined;
   History: undefined;
@@ -45,50 +50,79 @@ type RootTabParamList = {
   Settings: undefined;
 };
 
+type AccessMode = 'login' | 'authenticated' | 'guest';
+
+type AuthNavigationProps = {
+  onSignOut: () => void;
+  isGuest: boolean;
+};
+
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
 const SettingsStack =
   createNativeStackNavigator<SettingsStackParams>();
 
-function SettingsNavigator() {
+// --------------------------------------------------
+// SETTINGS STACK NAVIGATOR
+// --------------------------------------------------
+
+function SettingsNavigator({
+  onSignOut,
+  isGuest,
+}: AuthNavigationProps) {
   const { darkMode } = useAppTheme();
+
   const colors = darkMode ? darkColors : lightColors;
 
   return (
-    <SettingsStack.Navigator>
+    <SettingsStack.Navigator
+      screenOptions={{
+        headerStyle: {
+          backgroundColor: colors.card,
+        },
+        headerTintColor: colors.primary,
+        headerTitleStyle: {
+          fontWeight: 'bold',
+        },
+        contentStyle: {
+          backgroundColor: colors.background,
+        },
+      }}
+    >
       <SettingsStack.Screen
         name="SettingsMain"
-        component={SettingsScreen}
         options={{
           headerShown: false,
         }}
-      />
+      >
+        {props => (
+          <SettingsScreen
+            {...props}
+            onSignOut={onSignOut}
+            isGuest={isGuest}
+          />
+        )}
+      </SettingsStack.Screen>
 
       <SettingsStack.Screen
         name="Categories"
         component={CategoriesScreen}
         options={{
           title: 'Categories',
-          headerTintColor: colors.primary,
-          headerStyle: {
-            backgroundColor: colors.card,
-          },
-          headerTitleStyle: {
-            fontWeight: 'bold',
-          },
         }}
       />
     </SettingsStack.Navigator>
   );
 }
 
+// --------------------------------------------------
+// MAIN BOTTOM TAB NAVIGATOR
+// --------------------------------------------------
+
 function MainNavigator({
   onSignOut,
   isGuest,
-}: {
-  onSignOut: () => void;
-  isGuest: boolean;
-}) {
+}: AuthNavigationProps) {
   const insets = useSafeAreaInsets();
 
   const { darkMode } = useAppTheme();
@@ -193,24 +227,29 @@ function MainNavigator({
           component={BudgetScreen}
         />
 
-        <Tab.Screen
-          name="Settings"
-          component={SettingsNavigator}
-        />
+        <Tab.Screen name="Settings">
+          {() => (
+            <SettingsNavigator
+              onSignOut={onSignOut}
+              isGuest={isGuest}
+            />
+          )}
+        </Tab.Screen>
       </Tab.Navigator>
     </NavigationContainer>
   );
 }
 
+// --------------------------------------------------
+// APP AUTHENTICATION AND STARTUP
+// --------------------------------------------------
 
 function AppContent() {
-  const [loading, setLoading] = React.useState(true);
+  const [loading, setLoading] = useState(true);
 
-  const [access, setAccess] = React.useState<
-    'login' | 'authenticated' | 'guest'
-  >('login');
+  const [access, setAccess] = useState<AccessMode>('login');
 
-  React.useEffect(() => {
+  useEffect(() => {
     let active = true;
 
     const initialise = async () => {
@@ -220,21 +259,31 @@ function AppContent() {
         const user = await getCurrentUser();
 
         if (active) {
-          setAccess(user ? 'authenticated' : 'login');
+          setAccess(
+            user ? 'authenticated' : 'login'
+          );
         }
       } catch (error) {
         console.error('Startup error:', error);
+
+        if (active) {
+          setAccess('login');
+        }
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     };
 
-    initialise();
+    void initialise();
 
     return () => {
       active = false;
     };
   }, []);
+
+  // Loading screen
 
   if (loading) {
     return (
@@ -242,6 +291,7 @@ function AppContent() {
         <Text style={authStyles.loadingText}>
           🛒 Shopping Items
         </Text>
+
         <Text style={authStyles.loadingSubtext}>
           Loading your shopping companion...
         </Text>
@@ -249,17 +299,34 @@ function AppContent() {
     );
   }
 
+  // Login / registration screen
+
   if (access === 'login') {
     return (
       <AuthScreen
-        onAuthenticated={() => setAccess('authenticated')}
-        onGuest={() => setAccess('guest')}
+        onAuthenticated={() =>
+          setAccess('authenticated')
+        }
+        onGuest={() =>
+          setAccess('guest')
+        }
       />
     );
   }
 
-  return <MainNavigator />;
+  // Main app, signed in or guest
+
+  return (
+    <MainNavigator
+      onSignOut={() => setAccess('login')}
+      isGuest={access === 'guest'}
+    />
+  );
 }
+
+// --------------------------------------------------
+// APP ROOT
+// --------------------------------------------------
 
 export default function App() {
   return (
@@ -271,6 +338,10 @@ export default function App() {
   );
 }
 
+// --------------------------------------------------
+// LOADING SCREEN STYLES
+// --------------------------------------------------
+
 const authStyles = StyleSheet.create({
   loadingContainer: {
     flex: 1,
@@ -278,14 +349,15 @@ const authStyles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+
   loadingText: {
     fontSize: 30,
     fontWeight: '800',
     color: '#FFFFFF',
   },
+
   loadingSubtext: {
     color: '#D1FAE5',
     marginTop: 12,
   },
 });
-
