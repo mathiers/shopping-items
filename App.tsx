@@ -82,7 +82,13 @@ function SettingsNavigator() {
   );
 }
 
-function MainNavigator() {
+function MainNavigator({
+  onSignOut,
+  isGuest,
+}: {
+  onSignOut: () => void;
+  isGuest: boolean;
+}) {
   const insets = useSafeAreaInsets();
 
   const { darkMode } = useAppTheme();
