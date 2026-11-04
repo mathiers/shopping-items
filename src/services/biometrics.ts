@@ -2,20 +2,39 @@
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 
-const BIOMETRIC_KEY = 'shopping_items_biometrics_enabled';
+const LEGACY_BIOMETRIC_KEY = 'shopping_items_biometrics_enabled';
+const BIOMETRIC_PREFIX = 'shopping_items_biometrics_account_';
+
+function getAccountKey(userId: string): string {
+  if (!userId.trim()) {
+    throw new Error('An Appwrite user ID is required.');
+  }
+
+  return `${BIOMETRIC_PREFIX}${userId}`;
+}
 
 export async function isBiometricAvailable(): Promise<boolean> {
-  const hasHardware = await LocalAuthentication.hasHardwareAsync();
-  const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+  const [hasHardware, isEnrolled] = await Promise.all([
+    LocalAuthentication.hasHardwareAsync(),
+    LocalAuthentication.isEnrolledAsync(),
+  ]);
 
   return hasHardware && isEnrolled;
 }
 
-export async function isBiometricEnabled(): Promise<boolean> {
-  return (await SecureStore.getItemAsync(BIOMETRIC_KEY)) === 'true';
+export async function isBiometricEnabled(
+  userId: string
+): Promise<boolean> {
+  const saved = await SecureStore.getItemAsync(
+    getAccountKey(userId)
+  );
+
+  return saved === 'true';
 }
 
-export async function enableBiometricLogin(): Promise<boolean> {
+export async function enableBiometricLogin(
+  userId: string
+): Promise<boolean> {
   if (!(await isBiometricAvailable())) {
     return false;
   }
@@ -26,14 +45,26 @@ export async function enableBiometricLogin(): Promise<boolean> {
     disableDeviceFallback: true,
   });
 
-  if (!result.success) return false;
+  if (!result.success) {
+    return false;
+  }
 
-  await SecureStore.setItemAsync(BIOMETRIC_KEY, 'true');
+  await SecureStore.setItemAsync(
+    getAccountKey(userId),
+    'true'
+  );
+
   return true;
 }
 
-export async function disableBiometricLogin(): Promise<void> {
-  await SecureStore.deleteItemAsync(BIOMETRIC_KEY);
+export async function disableBiometricLogin(
+  userId: string
+): Promise<void> {
+  await SecureStore.deleteItemAsync(getAccountKey(userId));
+}
+
+export async function clearLegacyBiometricPreference(): Promise<void> {
+  await SecureStore.deleteItemAsync(LEGACY_BIOMETRIC_KEY);
 }
 
 export async function authenticateWithBiometrics(): Promise<boolean> {

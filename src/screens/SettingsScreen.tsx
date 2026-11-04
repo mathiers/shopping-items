@@ -84,6 +84,7 @@ export default function SettingsScreen({
 
   const [accountName, setAccountName] = useState('');
   const [accountEmail, setAccountEmail] = useState('');
+  const [accountId, setAccountId] = useState<string | null>(null);
   const [accountLoading, setAccountLoading] = useState(false);
 
   const [signingOut, setSigningOut] = useState(false);
@@ -126,6 +127,7 @@ export default function SettingsScreen({
       if (isGuest) {
         setAccountName('');
         setAccountEmail('');
+        setAccountId(null);
         setAccountLoading(false);
       } else {
         setAccountLoading(true);
@@ -136,6 +138,7 @@ export default function SettingsScreen({
 
             setAccountName(user?.name || 'Shopping Items User');
             setAccountEmail(user?.email || '');
+            setAccountId(user?.$id ?? null);
           })
           .catch(error => {
             if (!active) return;
@@ -143,6 +146,7 @@ export default function SettingsScreen({
             console.error('Account load error:', error);
             setAccountName('My Account');
             setAccountEmail('Unable to load account details');
+            setAccountId(null);
           })
           .finally(() => {
             if (active) setAccountLoading(false);
@@ -162,7 +166,7 @@ export default function SettingsScreen({
 
       const loadBiometrics = async () => {
         try {
-          if (isGuest) {
+          if (isGuest || !accountId) {
             if (active) {
               setBiometricAvailable(false);
               setBiometricEnabled(false);
@@ -172,7 +176,7 @@ export default function SettingsScreen({
 
           const [available, enabled] = await Promise.all([
             isBiometricAvailable(),
-            isBiometricEnabled(),
+            isBiometricEnabled(accountId),
           ]);
 
           if (active) {
@@ -189,7 +193,7 @@ export default function SettingsScreen({
       return () => {
         active = false;
       };
-    }, [isGuest])
+    }, [isGuest, accountId])
   );
 
   const updateCurrency = async (code: string) => {
@@ -204,13 +208,13 @@ export default function SettingsScreen({
   };
 
   const handleBiometricToggle = async (value: boolean) => {
-    if (biometricBusy || isGuest) return;
+    if (biometricBusy || isGuest || !accountId) return;
 
     setBiometricBusy(true);
 
     try {
       if (value) {
-        const enabled = await enableBiometricLogin();
+        const enabled = await enableBiometricLogin(accountId);
 
         if (enabled) {
           setBiometricEnabled(true);
@@ -221,7 +225,7 @@ export default function SettingsScreen({
           );
         }
       } else {
-        await disableBiometricLogin();
+        await disableBiometricLogin(accountId);
         setBiometricEnabled(false);
       }
     } catch (error) {
@@ -256,18 +260,15 @@ export default function SettingsScreen({
     setSigningOut(true);
 
     try {
+      // Remove this account's preference before ending its session.
+      // If this fails, do not sign out with stale local security state.
+      if (accountId) await disableBiometricLogin(accountId);
       await logoutUser();
-
-      // Disable fingerprint preference after explicit sign-out
-      try {
-        await disableBiometricLogin();
-      } catch (error) {
-        console.error('Biometric cleanup error:', error);
-      }
 
       setBiometricEnabled(false);
       setAccountName('');
       setAccountEmail('');
+      setAccountId(null);
 
       onSignOut?.();
     } catch (error: any) {
@@ -626,7 +627,7 @@ export default function SettingsScreen({
 
               <Text style={[styles.rowSubtitle, { color: secondary }]}>
                 {biometricAvailable
-                  ? 'Fingerprint lock setup (5-minute lock coming next)'
+                  ? 'Require fingerprint after 5 minutes away'
                   : 'Biometrics unavailable on this device'}
               </Text>
             </View>

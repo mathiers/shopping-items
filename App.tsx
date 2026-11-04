@@ -49,6 +49,7 @@ import {
 import {
   authenticateWithBiometrics,
   isBiometricEnabled,
+  clearLegacyBiometricPreference,
 } from './src/services/biometrics';
 
 import type { SettingsStackParams } from './src/screens/SettingsScreen';
@@ -225,6 +226,7 @@ function AppContent() {
   const [leavingSession, setLeavingSession] = useState(false);
 
   const accessRef = useRef<AccessMode>('login');
+  const accountIdRef = useRef<string | null>(null);
   const lockedRef = useRef(false);
   const backgroundAt = useRef<number | null>(null);
   const authenticationRunning = useRef(false);
@@ -244,7 +246,8 @@ function AppContent() {
     if (
       authenticationRunning.current ||
       accessRef.current !== 'authenticated' ||
-      !lockedRef.current
+      !lockedRef.current ||
+      !accountIdRef.current
     ) {
       return;
     }
@@ -279,6 +282,7 @@ function AppContent() {
         const user = await getCurrentUser();
 
         if (!active) return;
+        accountIdRef.current = user?.$id ?? null;
 
         if (!user) {
           updateAccess('login');
@@ -286,7 +290,8 @@ function AppContent() {
         }
 
         // Keep the app covered while checking security settings.
-        const enabled = await isBiometricEnabled();
+        await clearLegacyBiometricPreference();
+        const enabled = await isBiometricEnabled(user.$id);
 
         if (!active) return;
 
@@ -366,7 +371,9 @@ function AppContent() {
         updateLocked(true);
 
         try {
-          const enabled = await isBiometricEnabled();
+          const accountId = accountIdRef.current;
+          if (!accountId) return;
+          const enabled = await isBiometricEnabled(accountId);
 
           if (
             accessRef.current !== 'authenticated'
@@ -397,6 +404,7 @@ function AppContent() {
       // requires a new authentication.
       await logoutUser();
 
+      accountIdRef.current = null;
       updateLocked(false);
       updateAccess('login');
     } catch (error) {
@@ -407,6 +415,7 @@ function AppContent() {
   };
 
   const handleSignOut = () => {
+    accountIdRef.current = null;
     backgroundAt.current = null;
     updateLocked(false);
     updateAccess('login');
@@ -429,11 +438,29 @@ function AppContent() {
     return (
       <AuthScreen
         onAuthenticated={() => {
-          backgroundAt.current = null;
-          updateLocked(false);
-          updateAccess('authenticated');
+          // Verify the new Appwrite account before mounting its data screens.
+          setLoading(true);
+          void (async () => {
+            try {
+              const user = await getCurrentUser();
+              if (!user) throw new Error('No authenticated account');
+              accountIdRef.current = user.$id;
+              await clearLegacyBiometricPreference();
+              const enabled = await isBiometricEnabled(user.$id);
+              backgroundAt.current = null;
+              updateLocked(enabled);
+              updateAccess('authenticated');
+            } catch (error) {
+              console.error('Sign-in verification error:', error);
+              accountIdRef.current = null;
+              updateAccess('login');
+            } finally {
+              setLoading(false);
+            }
+          })();
         }}
         onGuest={() => {
+          accountIdRef.current = null;
           backgroundAt.current = null;
           updateLocked(false);
           updateAccess('guest');
@@ -577,5 +604,6 @@ const authStyles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
 });
+
 
 
