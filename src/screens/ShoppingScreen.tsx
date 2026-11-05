@@ -113,6 +113,7 @@ export default function ShoppingScreen() {
     useState(false);
   const [addExpanded, setAddExpanded] = useState(false);
 
+  const itemNameRef = useRef<React.ElementRef<typeof TextInput>>(null);
   const [itemName, setItemName] = useState('');
   const [itemPrice, setItemPrice] = useState('');
   const [itemQuantity, setItemQuantity] = useState('1');
@@ -402,34 +403,72 @@ export default function ShoppingScreen() {
   };
 
   const addItem = () => {
-    const valid = validateItem(
-      itemName,
-      itemPrice,
-      itemQuantity
+    const valid = validateItem(itemName, itemPrice, itemQuantity);
+    if (!valid || !isLoaded || finishingRef.current) return;
+
+    const category = categoryByName(categories, itemCategory).name;
+    const existing = items.find(item =>
+      !item.purchased &&
+      item.name.trim().toLocaleLowerCase() === valid.name.toLocaleLowerCase() &&
+      categoryByName(categories, item.category).name === category &&
+      item.price === valid.price
     );
 
-    if (!valid) return;
+    const resetForm = () => {
+      setItemName('');
+      setItemPrice('');
+      setItemQuantity('1');
+      // Retain the chosen category for faster repeated entry.
+      setSearchQuery('');
+      setSelectedCategory('All');
+      requestAnimationFrame(() => itemNameRef.current?.focus());
+    };
 
-    updateItems(previous => [
-      ...previous,
-      {
-        id: `${Date.now()}-${Math.random()}`,
-        ...valid,
-        category: categoryByName(
-          categories,
-          itemCategory
-        ).name,
-        purchased: false,
-      },
-    ]);
+    const createItem = () => {
+      updateItems(previous => [
+        ...previous,
+        {
+          id: `${Date.now()}-${Math.random()}`,
+          ...valid,
+          category,
+          purchased: false,
+        },
+      ]);
+      resetForm();
+    };
 
-    setItemName('');
-    setItemPrice('');
-    setItemQuantity('1');
-    setItemCategory('Other');
-    // Keep the form open for adding the next item.
-    setSearchQuery('');
-    setSelectedCategory('All');
+    if (existing) {
+      Alert.alert(
+        'Item already on your list',
+        `${valid.name} already exists at ${money(valid.price)} each. Add ${valid.quantity} to its quantity?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Keep Separate', onPress: createItem },
+          {
+            text: 'Increase Quantity',
+            onPress: () => {
+              updateItems(previous => previous.map(item =>
+                item.id === existing.id
+                  ? { ...item, quantity: item.quantity + valid.quantity }
+                  : item
+              ));
+              resetForm();
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    createItem();
+  };
+
+  const adjustListQuantity = (id: string, delta: number) => {
+    updateItems(previous => previous.map(item =>
+      item.id === id
+        ? { ...item, quantity: Math.max(1, item.quantity + delta) }
+        : item
+    ));
   };
 
   const openEditItem = (item: ShoppingItem) => {
@@ -759,7 +798,7 @@ export default function ShoppingScreen() {
 
               {remaining < 0 && (
                 <Text style={styles.warning}>
-                  ⚠ Over budget
+                  âš  Over budget
                 </Text>
               )}
             </View>
@@ -788,6 +827,7 @@ export default function ShoppingScreen() {
             {addExpanded && (
               <View style={styles.card}>
                 <TextInput
+                  ref={itemNameRef}
                   style={styles.input}
                   value={itemName}
                   onChangeText={setItemName}
@@ -829,6 +869,13 @@ export default function ShoppingScreen() {
                     </View>
                   </View>
                 </View>
+
+                <Text style={styles.liveTotal}>
+                  Item total: {money((Number(itemPrice) || 0) * (Number(itemQuantity) || 1))}
+                </Text>
+                <Text style={styles.liveBudget}>
+                  Planned after adding: {money(planned + (Number(itemPrice) || 0) * (Number(itemQuantity) || 1))}
+                </Text>
 
                 <Text style={styles.label}>
                   Category
@@ -1016,7 +1063,7 @@ export default function ShoppingScreen() {
               <Text style={styles.primaryText}>
                 {finishingTrip
                   ? 'Saving Trip...'
-                  : '✓ Finish Shopping Trip'}
+                  : 'âœ“ Finish Shopping Trip'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1094,8 +1141,29 @@ export default function ShoppingScreen() {
                 </Text>
 
                 <Text style={[styles.quantityText, dark && { color: '#CBD5E1' }]}>
-                  {item.quantity} × {money(item.price)}
+                  {item.quantity} Ã— {money(item.price)}
                 </Text>
+                <View style={styles.listStepper}>
+                  <TouchableOpacity
+                    style={styles.listStepButton}
+                    disabled={finishingTrip || item.quantity <= 1}
+                    onPress={() => adjustListQuantity(item.id, -1)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Decrease ${item.name} quantity`}
+                  >
+                    <Ionicons name="remove" size={16} color={item.quantity <= 1 ? '#94A3B8' : category.accent} />
+                  </TouchableOpacity>
+                  <Text style={[styles.listStepValue, { color: dark ? '#F8FAFC' : '#344054' }]}>{item.quantity}</Text>
+                  <TouchableOpacity
+                    style={styles.listStepButton}
+                    disabled={finishingTrip}
+                    onPress={() => adjustListQuantity(item.id, 1)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Increase ${item.name} quantity`}
+                  >
+                    <Ionicons name="add" size={16} color={category.accent} />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <TouchableOpacity
@@ -1509,6 +1577,39 @@ const createStyles = (dark: boolean) => StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
+  liveTotal: {
+    color: dark ? '#4ADE80' : '#15803D',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  liveBudget: {
+    color: dark ? '#CBD5E1' : '#64748B',
+    fontSize: 12,
+    marginBottom: 14,
+  },
+  listStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 5,
+    gap: 2,
+  },
+  listStepButton: {
+    width: 27,
+    height: 27,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: dark ? '#475569' : '#CBD5E1',
+  },
+  listStepValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    minWidth: 17,
+    textAlign: 'center',
+  },
   priceColumn: {
     alignItems: 'flex-end',
     marginHorizontal: 4,
@@ -1573,3 +1674,4 @@ const createStyles = (dark: boolean) => StyleSheet.create({
     alignItems: 'center',
   },
 });
+
