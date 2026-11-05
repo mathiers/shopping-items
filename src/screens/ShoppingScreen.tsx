@@ -391,6 +391,16 @@ export default function ShoppingScreen() {
     };
   };
 
+  const changeQuantity = (
+    current: string,
+    change: number,
+    setter: (value: string) => void
+  ) => {
+    const parsed = Number(current);
+    const safe = Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : 1;
+    setter(String(Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, safe + change))));
+  };
+
   const addItem = () => {
     const valid = validateItem(
       itemName,
@@ -417,7 +427,7 @@ export default function ShoppingScreen() {
     setItemPrice('');
     setItemQuantity('1');
     setItemCategory('Other');
-    setAddExpanded(false);
+    // Keep the form open for adding the next item.
     setSearchQuery('');
     setSelectedCategory('All');
   };
@@ -573,7 +583,14 @@ export default function ShoppingScreen() {
     selected: string,
     onSelect: (name: string) => void
   ) => (
-    <View style={styles.categoryGrid}>
+    <ScrollView
+      horizontal
+      nestedScrollEnabled
+      showsHorizontalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      style={styles.categoryCarousel}
+      contentContainerStyle={styles.categoryCarouselContent}
+    >
       {categories.map(category => {
         const active = selected === category.name;
 
@@ -617,7 +634,7 @@ export default function ShoppingScreen() {
           </TouchableOpacity>
         );
       })}
-    </View>
+    </ScrollView>
   );
 
   return (
@@ -634,7 +651,7 @@ export default function ShoppingScreen() {
             <View style={styles.titleRow}>
               <View>
                 <Text style={styles.title}>
-                  🛒 Shopping Items
+                  Shopping Items
                 </Text>
 
                 <Text style={styles.subtitle}>
@@ -742,7 +759,7 @@ export default function ShoppingScreen() {
 
               {remaining < 0 && (
                 <Text style={styles.warning}>
-                  ⚠️ Over budget
+                  ⚠ Over budget
                 </Text>
               )}
             </View>
@@ -788,14 +805,29 @@ export default function ShoppingScreen() {
                     keyboardType="decimal-pad"
                   />
 
-                  <TextInput
-                    style={[styles.input, styles.half]}
-                    value={itemQuantity}
-                    onChangeText={setItemQuantity}
-                    placeholder="Quantity"
-                     placeholderTextColor={dark ? '#94A3B8' : '#667085'}
-                    keyboardType="number-pad"
-                  />
+                  <View style={styles.half}>
+                    <Text style={styles.quantityLabel}>Quantity</Text>
+                    <View style={styles.quantityStepper}>
+                      <TouchableOpacity
+                        style={styles.quantityButton}
+                        onPress={() => changeQuantity(itemQuantity, -1, setItemQuantity)}
+                        disabled={Number(itemQuantity) <= 1}
+                        accessibilityLabel="Decrease item quantity"
+                        accessibilityRole="button"
+                      >
+                        <Ionicons name="remove" size={20} color={dark ? '#F8FAFC' : '#153c2e'} />
+                      </TouchableOpacity>
+                      <Text style={styles.quantityValue}>{itemQuantity}</Text>
+                      <TouchableOpacity
+                        style={styles.quantityButton}
+                        onPress={() => changeQuantity(itemQuantity, 1, setItemQuantity)}
+                        accessibilityLabel="Increase item quantity"
+                        accessibilityRole="button"
+                      >
+                        <Ionicons name="add" size={20} color={dark ? '#F8FAFC' : '#153c2e'} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 </View>
 
                 <Text style={styles.label}>
@@ -813,7 +845,7 @@ export default function ShoppingScreen() {
                   disabled={!isLoaded || finishingTrip}
                 >
                   <Text style={styles.primaryText}>
-                    Save Item
+                    Add Item to List
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1166,12 +1198,26 @@ export default function ShoppingScreen() {
                     Quantity
                   </Text>
 
-                  <TextInput
-                    style={styles.input}
-                    value={editQuantity}
-                    onChangeText={setEditQuantity}
-                    keyboardType="number-pad"
-                  />
+                  <View style={styles.quantityStepper}>
+                    <TouchableOpacity
+                      style={styles.quantityButton}
+                      onPress={() => changeQuantity(editQuantity, -1, setEditQuantity)}
+                      disabled={Number(editQuantity) <= 1}
+                      accessibilityLabel="Decrease edited quantity"
+                      accessibilityRole="button"
+                    >
+                      <Ionicons name="remove" size={20} color={dark ? '#F8FAFC' : '#153c2e'} />
+                    </TouchableOpacity>
+                    <Text style={styles.quantityValue}>{editQuantity}</Text>
+                    <TouchableOpacity
+                      style={styles.quantityButton}
+                      onPress={() => changeQuantity(editQuantity, 1, setEditQuantity)}
+                      accessibilityLabel="Increase edited quantity"
+                      accessibilityRole="button"
+                    >
+                      <Ionicons name="add" size={20} color={dark ? '#F8FAFC' : '#153c2e'} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
 
@@ -1303,6 +1349,34 @@ const createStyles = (dark: boolean) => StyleSheet.create({
   half: {
     width: '48%',
   },
+  quantityLabel: {
+    color: dark ? '#E2E8F0' : '#344054',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  quantityStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: dark ? '#475569' : '#d0d5dd',
+    borderRadius: 10,
+    minHeight: 48,
+    marginBottom: 12,
+  },
+  quantityButton: {
+    minWidth: 42,
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quantityValue: {
+    color: dark ? '#F8FAFC' : '#101828',
+    fontSize: 17,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
   hint: {
     fontSize: 12,
     color: dark ? '#94A3B8' : '#667085',
@@ -1334,11 +1408,16 @@ const createStyles = (dark: boolean) => StyleSheet.create({
     padding: 14,
     alignItems: 'center',
   },
-  categoryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  categoryCarousel: {
     marginBottom: 16,
+    flexGrow: 0,
+  },
+  categoryCarouselContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 16,
+    paddingVertical: 3,
   },
   categoryOption: {
     flexDirection: 'row',
