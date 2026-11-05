@@ -1,31 +1,17 @@
-
-export function formatCurrency(
-  amount: number | string,
+﻿export function formatCurrency(
+  amount: number,
   currency: string = 'GBP'
 ): string {
-  const value = Number(amount);
+  if (!Number.isFinite(amount)) {
+    return 'Invalid amount';
+  }
 
-  const symbols: Record<string, string> = {
-    GBP: '£',
-    USD: '$',
-    EUR: '€',
-    ZAR: 'R',
-    ZWL: 'Z$',
-    CAD: 'C$',
-    AUD: 'A$',
-    INR: '₹',
-    NGN: '₦',
-    JPY: '¥',
-  };
-
-  const symbol = symbols[currency] ?? currency;
-
-  const formattedAmount = (
-    Number.isFinite(value) ? value : 0
-  ).toLocaleString('en-GB', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-
-  return `${symbol} ${formattedAmount}`;
+  try {
+    return new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toFixed(2)}`;
+  }
 }
