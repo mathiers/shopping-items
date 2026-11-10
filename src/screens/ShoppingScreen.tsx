@@ -798,7 +798,7 @@ export default function ShoppingScreen() {
 
               {remaining < 0 && (
                 <Text style={styles.warning}>
-                  âš  Over budget
+                  Over budget
                 </Text>
               )}
             </View>
@@ -1017,7 +1017,7 @@ export default function ShoppingScreen() {
 
             <View style={styles.headerRow}>
               <Text style={styles.sectionTitle}>
-                My Shopping List
+                My My Shopping List
               </Text>
 
               <Text style={styles.smallLabel}>
@@ -1063,7 +1063,7 @@ export default function ShoppingScreen() {
               <Text style={styles.primaryText}>
                 {finishingTrip
                   ? 'Saving Trip...'
-                  : 'âœ“ Finish Shopping Trip'}
+                  : 'Finish Shopping Trip'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1141,7 +1141,7 @@ export default function ShoppingScreen() {
                 </Text>
 
                 <Text style={[styles.quantityText, dark && { color: '#CBD5E1' }]}>
-                  {item.quantity} Ã— {money(item.price)}
+                  {item.quantity} × {money(item.price)}
                 </Text>
                 <View style={styles.listStepper}>
                   <TouchableOpacity
@@ -1674,4 +1674,5 @@ const createStyles = (dark: boolean) => StyleSheet.create({
     alignItems: 'center',
   },
 });
+
 
