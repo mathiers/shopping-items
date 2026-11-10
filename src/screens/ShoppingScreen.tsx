@@ -831,7 +831,7 @@ export default function ShoppingScreen() {
                   style={styles.input}
                   value={itemName}
                   onChangeText={setItemName}
-                  placeholder="Item name"
+                  placeholder="What do you need to buy?"
                    placeholderTextColor={dark ? '#94A3B8' : '#667085'}
                 />
 
@@ -1238,7 +1238,7 @@ export default function ShoppingScreen() {
               </View>
 
               <Text style={styles.label}>
-                Item name
+                What do you need to buy?
               </Text>
 
               <TextInput
@@ -1674,5 +1674,6 @@ const createStyles = (dark: boolean) => StyleSheet.create({
     alignItems: 'center',
   },
 });
+
 
 
